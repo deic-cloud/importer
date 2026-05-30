@@ -36,9 +36,5 @@ module.exports = (env, argv) => {
 			],
 		},
 		plugins: [new VueLoaderPlugin()],
-		externals: {
-			// Use Vue from the global NC scope — avoids bundling it twice
-			vue: 'Vue',
-		},
 	}
 }
