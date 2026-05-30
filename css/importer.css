@@ -1,0 +1,155 @@
+.importer-app,
+.importer-personal {
+	max-width: 900px;
+	padding: 20px 30px;
+}
+
+.importer-form,
+.importer-queue,
+.importer-browser,
+.importer-add-cred {
+	margin-bottom: 24px;
+}
+
+.importer-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+.importer-row label {
+	min-width: 160px;
+	font-weight: bold;
+}
+
+.importer-url-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.importer-error {
+	color: var(--color-error);
+	margin: 4px 0;
+}
+
+.importer-error-inline {
+	color: var(--color-error);
+	cursor: help;
+}
+
+.importer-empty {
+	color: var(--color-text-maxcontrast);
+}
+
+/* Job table */
+.importer-jobs {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.importer-jobs th,
+.importer-jobs td {
+	padding: 6px 8px;
+	border-bottom: 1px solid var(--color-border);
+	text-align: left;
+}
+
+.importer-cell-url {
+	max-width: 200px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.importer-progress {
+	width: 120px;
+	height: 8px;
+	background: var(--color-border);
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.importer-progress-bar {
+	height: 100%;
+	background: var(--color-primary);
+	transition: width 0.3s ease;
+}
+
+.status-done td { opacity: 0.7; }
+.status-failed td:first-child { opacity: 0.7; }
+
+/* Remote browser */
+.importer-browser {
+	border: 1px solid var(--color-border);
+	border-radius: var(--border-radius);
+	padding: 12px;
+}
+
+.importer-browser-bar {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 8px;
+	font-family: monospace;
+	font-size: 0.85em;
+	color: var(--color-text-maxcontrast);
+}
+
+.importer-browser-url {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.importer-browser-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	max-height: 300px;
+	overflow-y: auto;
+}
+
+.importer-browser-list li {
+	padding: 5px 8px;
+	cursor: pointer;
+	border-radius: var(--border-radius);
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.importer-browser-list li:hover {
+	background: var(--color-background-hover);
+}
+
+.importer-size {
+	margin-left: auto;
+	color: var(--color-text-maxcontrast);
+	font-size: 0.85em;
+}
+
+/* Credential table */
+.importer-cred-table {
+	width: 100%;
+	border-collapse: collapse;
+	margin-bottom: 16px;
+}
+
+.importer-cred-table th,
+.importer-cred-table td {
+	padding: 6px 8px;
+	border-bottom: 1px solid var(--color-border);
+	text-align: left;
+}
+
+.importer-add-cred summary {
+	cursor: pointer;
+	color: var(--color-primary);
+	font-weight: bold;
+	margin-bottom: 12px;
+}
+
+.importer-add-cred-form {
+	padding: 12px 0;
+}
