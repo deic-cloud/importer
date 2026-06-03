@@ -30,11 +30,19 @@
 				<label>{{ t('importer', 'Destination folder') }}</label>
 				<input v-model="form.destination"
 					type="text"
-					placeholder="/Import"
+					placeholder="/"
 					class="importer-url-input" />
 				<button class="button" @click="pickDestination">
 					{{ t('importer', 'Browse') }}
 				</button>
+				<select v-if="grantGroups.length > 0"
+					v-model="storageLocation"
+					:title="t('importer', 'Save to home folder or a grant folder')">
+					<option value="home">{{ t('importer', 'Home') }}</option>
+					<option v-for="g in grantGroups" :key="g.gid" :value="g.gid">
+						{{ g.gid }}
+					</option>
+				</select>
 			</div>
 
 			<div class="importer-row">
@@ -50,6 +58,12 @@
 		<div v-if="browser.visible" class="importer-browser section">
 			<div class="importer-browser-bar">
 				<span class="importer-browser-url" :title="browser.url">{{ browser.url }}</span>
+				<button v-if="browser.entries.length > 0"
+					class="button"
+					:disabled="!canQueue || scanning"
+					@click="queueAllVisible">
+					{{ scanning ? t('importer', 'Scanning…') : t('importer', 'Queue all files') }}
+				</button>
 				<button class="button icon-close" @click="browser.visible = false" />
 			</div>
 			<p v-if="browser.error" class="importer-error">{{ browser.error }}</p>
@@ -61,7 +75,7 @@
 				<li v-for="entry in browser.entries"
 					:key="entry.url"
 					:class="{ 'is-dir': entry.is_dir }"
-					@click="entry.is_dir ? browserNavigate(entry.url) : selectFile(entry)">
+					@click="entry.is_dir ? browserNavigate(entry.url) : queueSingleFile(entry)">
 					<span :class="entry.is_dir ? 'icon-folder' : 'icon-file'" />
 					{{ entry.name }}
 					<span v-if="!entry.is_dir && entry.size" class="importer-size">{{ formatSize(entry.size) }}</span>
@@ -71,7 +85,32 @@
 
 		<!-- ── Job queue ── -->
 		<div class="importer-queue section">
-			<h3>{{ t('importer', 'Download queue') }}</h3>
+			<div class="importer-queue-header">
+				<h3>{{ t('importer', 'Download queue') }}</h3>
+				<button v-if="jobs.some(j => j.status === 'queued')"
+					class="button button-vue primary"
+					@click="downloadAll">
+					{{ t('importer', 'Download all') }}
+				</button>
+				<label v-if="jobs.some(j => j.status === 'queued')" class="importer-parallel-label">
+					{{ t('importer', 'Parallel:') }}
+					<input v-model.number="parallelLimit"
+						type="number" min="1" max="20"
+						class="importer-parallel-input"
+						@change="saveParallelLimit" />
+				</label>
+				<label v-if="jobs.some(j => j.status === 'queued')"
+					class="importer-overwrite-label"
+					:title="t('importer', 'Overwrite any existing files with the same names')">
+					<input type="checkbox" v-model="overwrite" />
+					{{ t('importer', 'Overwrite') }}
+				</label>
+				<button v-if="jobs.some(j => j.status !== 'running')"
+					class="button"
+					@click="clearQueue">
+					{{ t('importer', 'Clear queue') }}
+				</button>
+			</div>
 			<p v-if="jobs.length === 0" class="importer-empty">
 				{{ t('importer', 'No downloads queued.') }}
 			</p>
@@ -88,7 +127,7 @@
 				<tbody>
 					<tr v-for="job in jobs" :key="job.id" :class="`status-${job.status}`">
 						<td :title="job.source_url" class="importer-cell-url">{{ basename(job.source_url) }}</td>
-						<td>{{ job.destination }}</td>
+						<td>{{ displayDestination(job.destination) }}</td>
 						<td>{{ statusLabel(job.status) }}</td>
 						<td>
 							<div v-if="job.status === 'running'" class="importer-progress">
@@ -112,7 +151,7 @@
 </template>
 
 <script>
-import { listJobs, queueJob, deleteJob, listRemote } from './api.js'
+import { listJobs, queueJob, deleteJob, listRemote, listGrantGroups, processJob } from './api.js'
 
 export default {
 	name: 'ImporterApp',
@@ -122,9 +161,14 @@ export default {
 			form: {
 				provider: 'http',
 				sourceUrl: '',
-				destination: '/Import',
+				destination: '/',
 			},
+			storageLocation: 'home',
+			overwrite: false,
+			grantGroups: [],
 			formError: null,
+			scanning: false,
+			parallelLimit: parseInt(localStorage.getItem('importer_parallel') || '3', 10),
 			jobs: [],
 			pollTimer: null,
 			browser: {
@@ -140,6 +184,11 @@ export default {
 	},
 
 	computed: {
+		effectiveDestination() {
+			if (this.storageLocation === 'home') return this.form.destination
+			const sub = this.form.destination.replace(/^\//, '')
+			return `grant:${this.storageLocation}:${sub}`
+		},
 		canQueue() {
 			return this.form.sourceUrl.trim() !== '' && this.form.destination.trim() !== ''
 		},
@@ -159,6 +208,7 @@ export default {
 
 	mounted() {
 		this.loadJobs()
+		this.loadGrantGroups()
 		this.pollTimer = setInterval(this.pollJobs, 3000)
 	},
 
@@ -175,6 +225,10 @@ export default {
 			}
 		},
 
+		async loadGrantGroups() {
+			this.grantGroups = await listGrantGroups()
+		},
+
 		async pollJobs() {
 			const hasActive = this.jobs.some(j => j.status === 'queued' || j.status === 'running')
 			if (hasActive) await this.loadJobs()
@@ -184,12 +238,44 @@ export default {
 			this.formError = null
 			if (!this.canQueue) return
 			try {
-				const job = await queueJob(this.form.provider, this.form.sourceUrl.trim(), this.form.destination.trim())
+				const job = await queueJob(this.form.provider, this.form.sourceUrl.trim(), this.effectiveDestination)
 				this.jobs.unshift(job)
 				this.form.sourceUrl = ''
 			} catch (e) {
 				this.formError = e?.response?.data?.ocs?.data?.error ?? t('importer', 'Failed to queue download')
 			}
+		},
+
+		saveParallelLimit() {
+			const v = Math.max(1, Math.min(20, this.parallelLimit || 1))
+			this.parallelLimit = v
+			localStorage.setItem('importer_parallel', String(v))
+		},
+
+		async downloadAll() {
+			const queued = this.jobs.filter(j => j.status === 'queued').length
+			if (queued === 0) return
+			const workers = Math.min(queued, this.parallelLimit)
+			await Promise.all(Array.from({ length: workers }, () => this.runWorker()))
+		},
+
+		async runWorker() {
+			while (true) {
+				let result
+				try {
+					result = await processJob(this.overwrite)
+				} catch {
+					break
+				}
+				await this.loadJobs()
+				if (result.done) break
+			}
+		},
+
+		async clearQueue() {
+			const removable = this.jobs.filter(j => j.status !== 'running')
+			await Promise.all(removable.map(j => deleteJob(j.id).catch(() => {})))
+			this.jobs = this.jobs.filter(j => j.status === 'running')
 		},
 
 		async removeJob(id) {
@@ -202,7 +288,6 @@ export default {
 		},
 
 		onProviderChange() {
-			this.form.sourceUrl = ''
 			this.browser.visible = false
 		},
 
@@ -238,18 +323,109 @@ export default {
 			if (prev) this.loadBrowser(prev)
 		},
 
-		selectFile(entry) {
-			this.form.sourceUrl  = entry.url
-			this.browser.visible = false
+		async queueSingleFile(entry) {
+			this.formError = null
+			try {
+				const job = await queueJob(this.form.provider, entry.url, this.effectiveDestination)
+				this.jobs.unshift(job)
+			} catch (e) {
+				this.formError = e?.response?.data?.ocs?.data?.error ?? t('importer', 'Failed to queue download')
+			}
+		},
+
+		async queueAllVisible() {
+			this.formError = null
+			this.scanning = true
+			try {
+				await this.queueRecursive(this.browser.url, this.browser.entries, '')
+			} finally {
+				this.scanning = false
+			}
+		},
+
+		destWithSubdir(relDir) {
+			if (!relDir) return this.effectiveDestination
+			if (this.storageLocation === 'home') {
+				return this.form.destination.replace(/\/$/, '') + '/' + relDir
+			}
+			const sub = this.form.destination.replace(/^\//, '').replace(/\/$/, '')
+			return `grant:${this.storageLocation}:${sub ? sub + '/' + relDir : relDir}`
+		},
+
+		async queueRecursive(baseUrl, entries, relDir) {
+			for (const entry of entries) {
+				if (entry.is_dir) {
+					let subEntries
+					try {
+						subEntries = await listRemote(this.form.provider, entry.url)
+					} catch (e) {
+						this.formError = e?.response?.data?.ocs?.data?.error ?? t('importer', 'Could not list directory')
+						continue
+					}
+					const subDir = relDir ? relDir + '/' + entry.name : entry.name
+					await this.queueRecursive(entry.url, subEntries, subDir)
+				} else {
+					try {
+						const job = await queueJob(this.form.provider, entry.url, this.destWithSubdir(relDir))
+						this.jobs.unshift(job)
+					} catch (e) {
+						this.formError = e?.response?.data?.ocs?.data?.error ?? t('importer', 'Failed to queue some files')
+					}
+				}
+			}
+		},
+
+		suppressGrantCrumb() {
+			const hide = () => {
+				const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+				let node
+				while ((node = walker.nextNode())) {
+					if (node.textContent.trim() !== '.uga_grants') continue
+					// Walk up to find the best breadcrumb item to hide
+					let target = node.parentElement
+					let el = target
+					while (el && el !== document.body) {
+						if (['LI', 'A', 'BUTTON'].includes(el.tagName)) {
+							target = el
+							if (el.parentElement && ['UL', 'OL', 'NAV'].includes(el.parentElement.tagName)) break
+						}
+						el = el.parentElement
+					}
+					if (target) target.style.display = 'none'
+				}
+			}
+			hide()
+			const observer = new MutationObserver(hide)
+			observer.observe(document.body, { subtree: true, childList: true, characterData: true })
+			return observer
 		},
 
 		pickDestination() {
 			if (!window.OC?.dialogs?.filepicker) return
+			const isGrant   = this.storageLocation !== 'home'
+			const startPath = isGrant ? '/.uga_grants/' + this.storageLocation : undefined
+			const observer  = isGrant ? this.suppressGrantCrumb() : null
 			OC.dialogs.filepicker(
 				t('importer', 'Choose destination folder'),
-				(path) => { this.form.destination = path },
+				(path) => {
+					if (observer) observer.disconnect()
+					if (path.startsWith('/.uga_grants/')) {
+						const rest  = path.slice('/.uga_grants/'.length)
+						const slash = rest.indexOf('/')
+						const gid   = slash === -1 ? rest : rest.slice(0, slash)
+						const sub   = slash === -1 ? '/' : rest.slice(slash) || '/'
+						if (this.grantGroups.some(g => g.gid === gid)) {
+							this.storageLocation  = gid
+							this.form.destination = sub
+							return
+						}
+					}
+					this.storageLocation  = 'home'
+					this.form.destination = path || '/'
+				},
 				false, 'httpd/unix-directory', true,
 				OC.dialogs.FILEPICKER_TYPE_CHOOSE,
+				startPath,
 			)
 		},
 
@@ -258,9 +434,19 @@ export default {
 				queued:  t('importer', 'Queued'),
 				running: t('importer', 'Downloading'),
 				done:    t('importer', 'Done'),
+				skipped: t('importer', 'Skipped'),
 				failed:  t('importer', 'Failed'),
 			}
 			return map[status] ?? status
+		},
+
+		displayDestination(dest) {
+			const d = String(dest ?? '')
+			if (d.startsWith('grant:')) {
+				const [, gid, sub] = d.split(':', 3)
+				return gid + ':/' + (sub || '')
+			}
+			return d
 		},
 
 		basename(url) {

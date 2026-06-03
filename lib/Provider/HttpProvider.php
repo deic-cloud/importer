@@ -20,28 +20,39 @@ class HttpProvider implements IImportProvider {
 	}
 
 	public function getStream(string $url, array $creds) {
-		$options = ['stream' => true, 'timeout' => 0];
+		$options = [
+			'timeout'   => 0,
+			'nextcloud' => ['allow_local_address' => true],
+		];
 		if (!empty($creds['username'])) {
 			$options['auth'] = [$creds['username'], $creds['password'] ?? ''];
 		}
 		$client   = $this->httpClientService->newClient();
 		$response = $client->get($url, $options);
-		$stream   = $response->getBody();
-		if (is_string($stream)) {
+		$body     = $response->getBody();
+		if (is_resource($body)) {
+			rewind($body);
+			return $body;
+		}
+		if (is_string($body)) {
 			$h = fopen('php://temp', 'r+');
-			fwrite($h, $stream);
+			fwrite($h, $body);
 			rewind($h);
 			return $h;
 		}
-		// GuzzleHttp PSR-7 stream — detach to get the underlying resource
-		if (method_exists($stream, 'detach')) {
-			return $stream->detach();
+		// PSR-7 stream object — detach to get the underlying resource
+		if (is_object($body) && method_exists($body, 'detach')) {
+			$res = $body->detach();
+			if (is_resource($res)) return $res;
 		}
 		throw new \RuntimeException('Could not obtain stream from HTTP response');
 	}
 
 	public function getFileSize(string $url, array $creds): int {
-		$options = ['timeout' => 15];
+		$options = [
+			'timeout'   => 15,
+			'nextcloud' => ['allow_local_address' => true],
+		];
 		if (!empty($creds['username'])) {
 			$options['auth'] = [$creds['username'], $creds['password'] ?? ''];
 		}

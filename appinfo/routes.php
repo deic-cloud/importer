@@ -15,7 +15,11 @@ return [
 		['name' => 'api#listCredentials',   'url' => '/api/v1/credentials',            'verb' => 'GET'],
 		['name' => 'api#saveCredentials',   'url' => '/api/v1/credentials',            'verb' => 'POST'],
 		['name' => 'api#deleteCredentials', 'url' => '/api/v1/credentials/{provider}/{host}', 'verb' => 'DELETE'],
+		// Process next queued job (synchronous, called by frontend workers)
+		['name' => 'api#processJob', 'url' => '/api/v1/process', 'verb' => 'POST'],
 		// Directory listing (for folder picker in import form)
 		['name' => 'api#listRemote', 'url' => '/api/v1/ls', 'verb' => 'POST'],
+		// Grant groups for current user
+		['name' => 'api#listGrantGroups', 'url' => '/api/v1/grant-groups', 'verb' => 'GET'],
 	],
 ];

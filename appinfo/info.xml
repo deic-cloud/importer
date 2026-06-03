@@ -29,5 +29,6 @@
 	</navigations>
 	<settings>
 		<personal>OCA\Importer\Settings\PersonalSettings</personal>
+		<personal-section>OCA\Importer\Settings\PersonalSection</personal-section>
 	</settings>
 </info>

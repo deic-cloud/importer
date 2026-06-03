@@ -8,8 +8,8 @@ export async function listJobs() {
 	return data.ocs?.data ?? []
 }
 
-export async function queueJob(provider, sourceUrl, destination) {
-	const { data } = await axios.post(`${BASE}/jobs`, { provider, sourceUrl, destination }, OCS)
+export async function queueJob(provider, sourceUrl, destination, overwrite = false) {
+	const { data } = await axios.post(`${BASE}/jobs`, { provider, sourceUrl, destination, overwrite }, OCS)
 	return data.ocs?.data ?? {}
 }
 
@@ -33,4 +33,18 @@ export async function deleteCredentials(provider, host) {
 export async function listRemote(provider, url) {
 	const { data } = await axios.post(`${BASE}/ls`, { provider, url }, OCS)
 	return data.ocs?.data ?? []
+}
+
+export async function processJob(overwrite = false) {
+	const { data } = await axios.post(`${BASE}/process`, { overwrite }, OCS)
+	return data.ocs?.data ?? { done: true }
+}
+
+export async function listGrantGroups() {
+	try {
+		const { data } = await axios.get(`${BASE}/grant-groups`, OCS)
+		return data.ocs?.data ?? []
+	} catch {
+		return []
+	}
 }

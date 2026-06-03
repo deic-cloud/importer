@@ -7,6 +7,7 @@ namespace OCA\Importer\Controller;
 use OCA\Importer\AppInfo\Application;
 use OCA\Importer\Service\CredentialService;
 use OCA\Importer\Service\ImportService;
+use OCP\App\IAppManager;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\OCSController;
@@ -19,6 +20,7 @@ class ApiController extends OCSController {
 		private IUserSession    $userSession,
 		private ImportService   $importService,
 		private CredentialService $credentialService,
+		private IAppManager     $appManager,
 	) {
 		parent::__construct(Application::APP_ID, $request);
 	}
@@ -36,9 +38,9 @@ class ApiController extends OCSController {
 	}
 
 	#[NoAdminRequired]
-	public function queueJob(string $provider, string $sourceUrl, string $destination): DataResponse {
+	public function queueJob(string $provider, string $sourceUrl, string $destination, bool $overwrite = false): DataResponse {
 		try {
-			$job = $this->importService->queueJob($this->uid(), $provider, $sourceUrl, $destination);
+			$job = $this->importService->queueJob($this->uid(), $provider, $sourceUrl, $destination, $overwrite);
 			return new DataResponse($job->jsonSerialize());
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['error' => $e->getMessage()], 400);
@@ -78,6 +80,35 @@ class ApiController extends OCSController {
 	public function deleteCredentials(string $provider, string $host): DataResponse {
 		$this->credentialService->delete($this->uid(), $provider, $host);
 		return new DataResponse([]);
+	}
+
+	// ── Grant groups ─────────────────────────────────────────────────────────
+
+	#[NoAdminRequired]
+	public function listGrantGroups(): DataResponse {
+		if (!$this->appManager->isInstalled('user_group_admin')) {
+			return new DataResponse([]);
+		}
+		try {
+			/** @var \OCA\UserGroupAdmin\Db\GroupMapper $mapper */
+			$mapper = \OC::$server->get(\OCA\UserGroupAdmin\Db\GroupMapper::class);
+			$groups = $mapper->findGrantGroupsForMember($this->uid());
+			return new DataResponse(array_map(fn($g) => ['gid' => $g->getGid()], $groups));
+		} catch (\Throwable) {
+			return new DataResponse([]);
+		}
+	}
+
+	// ── Processing ───────────────────────────────────────────────────────────
+
+	#[NoAdminRequired]
+	public function processJob(bool $overwrite = false): DataResponse {
+		set_time_limit(0);
+		$job = $this->importService->claimAndProcess($this->uid(), $overwrite);
+		if ($job === null) {
+			return new DataResponse(['done' => true]);
+		}
+		return new DataResponse(array_merge($job->jsonSerialize(), ['done' => false]));
 	}
 
 	// ── Remote listing ───────────────────────────────────────────────────────

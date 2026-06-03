@@ -30,19 +30,6 @@
 	margin: 0;
 }
 
-.importer-parallel-label {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	font-size: 0.9em;
-	color: var(--color-text-maxcontrast);
-}
-
-.importer-parallel-input {
-	width: 3.5em;
-	text-align: center;
-}
-
 .importer-row {
 	display: flex;
 	align-items: center;
@@ -126,18 +113,6 @@
 	font-family: monospace;
 	font-size: 0.85em;
 	color: var(--color-text-maxcontrast);
-}
-
-.status-skipped {
-	opacity: 0.5;
-}
-
-.importer-overwrite-label {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	cursor: pointer;
-	white-space: nowrap;
 }
 
 .importer-browser-url {

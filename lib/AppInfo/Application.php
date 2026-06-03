@@ -25,8 +25,12 @@ class Application extends App implements IBootstrap {
 	}
 
 	public function register(IRegistrationContext $context): void {
-		$context->registerBackgroundJob(DownloadJob::class);
-		$context->registerNotifierService(Notifier::class);
+		try {
+			$context->registerBackgroundJob(DownloadJob::class);
+		} catch (\Throwable) {}
+		try {
+			$context->registerNotifierService(Notifier::class);
+		} catch (\Throwable) {}
 
 		$context->registerService(ImportService::class, function (ContainerInterface $c): ImportService {
 			return new ImportService(

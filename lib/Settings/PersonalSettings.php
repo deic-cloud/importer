@@ -17,7 +17,7 @@ class PersonalSettings implements ISettings {
 	}
 
 	public function getSection(): string {
-		return 'personal-info';
+		return 'importer';
 	}
 
 	public function getPriority(): int {

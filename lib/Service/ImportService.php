@@ -9,6 +9,7 @@ use OCA\Importer\Db\ImportJobMapper;
 use OCA\Importer\Provider\IImportProvider;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\Files\IRootFolder;
+use OCP\Lock\LockedException;
 
 class ImportService {
 	/** @var IImportProvider[] */
@@ -34,7 +35,7 @@ class ImportService {
 		return $this->providers[$id] ?? throw new \InvalidArgumentException("Unknown provider: $id");
 	}
 
-	public function queueJob(string $userId, string $provider, string $sourceUrl, string $destination): ImportJob {
+	public function queueJob(string $userId, string $provider, string $sourceUrl, string $destination, bool $overwrite = false): ImportJob {
 		$this->getProvider($provider); // validate
 
 		$job = new ImportJob();
@@ -42,6 +43,7 @@ class ImportService {
 		$job->setProvider($provider);
 		$job->setSourceUrl($sourceUrl);
 		$job->setDestination($destination);
+		$job->setOverwrite($overwrite);
 		$job->setStatus('queued');
 		$job->setProgress(0);
 		$job->setCreatedAt(time());
@@ -93,45 +95,101 @@ class ImportService {
 		return $job;
 	}
 
-	private function runJob(ImportJob $job): void {
+	/** Returns true if the file was written, false if it was skipped (exists + !overwrite). */
+	private function writeFile(\OCP\Files\Folder $folder, string $name, mixed $stream, bool $overwrite): bool {
+		try {
+			if ($folder->nodeExists($name)) {
+				if (!$overwrite) return false;
+				$folder->get($name)->putContent($stream);
+			} else {
+				$folder->newFile($name)->putContent($stream);
+			}
+		} catch (LockedException $e) {
+			throw new \RuntimeException("$name is locked by another process — wait a moment and try again");
+		}
+		return true;
+	}
+
+	private function ensureFolder(\OCP\Files\Folder $base, string $path): \OCP\Files\Folder {
+		$folder = $base;
+		foreach (array_filter(explode('/', $path)) as $part) {
+			if ($folder->nodeExists($part)) {
+				$folder = $folder->get($part);
+			} else {
+				$folder = $folder->newFolder($part);
+			}
+		}
+		return $folder;
+	}
+
+	private function runJob(ImportJob $job, bool $overwrite = false): void {
 		$provider = $this->getProvider($job->getProvider());
 		$uid      = $job->getUserId();
 
-		// Resolve credentials
-		$host  = parse_url($job->getSourceUrl(), PHP_URL_HOST) ?? '';
-		$creds = $this->credentialService->retrieve($uid, $job->getProvider(), $host);
+		$creds = $this->credentialService->retrieve($uid, $job->getProvider(), $job->getSourceUrl());
 
-		// Ensure destination folder exists in NC files
-		$userFolder = $this->rootFolder->getUserFolder($uid);
-		$destPath   = $job->getDestination();
-		if (!$userFolder->nodeExists($destPath)) {
-			$userFolder->newFolder($destPath);
-		}
-		$destFolder = $userFolder->get($destPath);
-		if (!($destFolder instanceof \OCP\Files\Folder)) {
-			throw new \RuntimeException("Destination is not a folder: $destPath");
-		}
+		$filename = rawurldecode(basename(parse_url($job->getSourceUrl(), PHP_URL_PATH) ?: 'download') ?: 'download');
+		$stream   = $provider->getStream($job->getSourceUrl(), $creds);
 
-		// Filename from URL
-		$filename = basename(parse_url($job->getSourceUrl(), PHP_URL_PATH) ?: 'download');
-		if ($filename === '') $filename = 'download';
+		$destination = $job->getDestination();
 
-		// Stream download → NC file
-		$stream = $provider->getStream($job->getSourceUrl(), $creds);
-		try {
-			$ncFile = $destFolder->newFile($filename);
-			$ncFile->putContent($stream);
-		} finally {
-			if (is_resource($stream)) fclose($stream);
+		if (str_starts_with($destination, 'grant:')) {
+			// grant:{gid}:{subpath} — write inside files/.uga_grants/{gid}/ via NC API so the file cache is updated
+			[, $gid, $subPath] = explode(':', $destination, 3) + ['', '', ''];
+			$destPath   = '.uga_grants/' . $gid;
+			if ($subPath !== '') {
+				$destPath .= '/' . ltrim($subPath, '/');
+			}
+			$userFolder = $this->rootFolder->getUserFolder($uid);
+			$destFolder = $this->ensureFolder($userFolder, $destPath);
+			try {
+				$written = $this->writeFile($destFolder, $filename, $stream, $overwrite);
+			} finally {
+				if (is_resource($stream)) fclose($stream);
+			}
+		} else {
+			// NC home — use NC files API
+			$userFolder = $this->rootFolder->getUserFolder($uid);
+			$destFolder = $this->ensureFolder($userFolder, $destination);
+			try {
+				$written = $this->writeFile($destFolder, $filename, $stream, $overwrite);
+			} finally {
+				if (is_resource($stream)) fclose($stream);
+			}
 		}
 
 		$job->setProgress(100);
+		if (!$written) {
+			$job->setStatus('skipped');
+		}
+	}
+
+	/**
+	 * Claim the next queued job for the user and run it synchronously.
+	 * Returns the finished job, or null if no queued jobs remain.
+	 */
+	public function claimAndProcess(string $userId, bool $overwrite = false): ?ImportJob {
+		$job = $this->mapper->claimNextQueued($userId);
+		if ($job === null) return null;
+
+		try {
+			$this->runJob($job, $overwrite);
+			if ($job->getStatus() !== 'skipped') {
+				$job->setStatus('done');
+			}
+			$job->setProgress(100);
+		} catch (\Throwable $e) {
+			$job->setStatus('failed');
+			$job->setErrorMessage($e->getMessage());
+		}
+		$job->setUpdatedAt(time());
+		$this->mapper->update($job);
+		return $job;
 	}
 
 	public function listRemote(string $userId, string $provider, string $url): array {
 		$p    = $this->getProvider($provider);
-		$host = parse_url($url, PHP_URL_HOST) ?? '';
-		$creds = $this->credentialService->retrieve($userId, $provider, $host);
+		$creds = $this->credentialService->retrieve($userId, $provider, $url);
 		return $p->listDirectory($url, $creds);
 	}
 }

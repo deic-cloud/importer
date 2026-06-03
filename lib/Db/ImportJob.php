@@ -25,8 +25,11 @@ use OCP\AppFramework\Db\Entity;
  * @method void   setCreatedAt(int $ts)
  * @method int    getUpdatedAt()
  * @method void   setUpdatedAt(int $ts)
+ * @method bool   getOverwrite()
+ * @method void   setOverwrite(bool $overwrite)
  */
 class ImportJob extends Entity {
+	protected array $_fieldTypes = ['id' => 'integer', 'overwrite' => 'boolean'];
 	protected string $userId = '';
 	protected string $provider = '';
 	protected string $sourceUrl = '';
@@ -36,6 +39,7 @@ class ImportJob extends Entity {
 	protected ?string $errorMessage = null;
 	protected int $createdAt = 0;
 	protected int $updatedAt = 0;
+	protected bool $overwrite = false;
 
 	public function jsonSerialize(): array {
 		return [
@@ -48,6 +52,7 @@ class ImportJob extends Entity {
 			'error_message'=> $this->errorMessage,
 			'created_at'   => $this->createdAt,
 			'updated_at'   => $this->updatedAt,
+			'overwrite'    => $this->overwrite,
 		];
 	}
 }

@@ -136,15 +136,20 @@ export default {
 		async addCred() {
 			this.saveError = null
 			const c = this.newCred
-			if (!c.host.trim()) {
-				this.saveError = t('importer', 'Host / Endpoint is required')
-				return
+			let host = c.host.trim()
+			if (!host) {
+				if (c.provider === 's3') {
+					host = c.endpoint.trim() || 's3://'
+				} else {
+					this.saveError = t('importer', 'Host / Endpoint is required')
+					return
+				}
 			}
 			const creds = c.provider === 's3'
 				? { access_key: c.access_key, secret_key: c.secret_key, region: c.region || 'us-east-1', endpoint: c.endpoint }
 				: { username: c.username, password: c.password }
 			try {
-				await saveCredentials(c.provider, c.host.trim(), creds)
+				await saveCredentials(c.provider, host, creds)
 				this.newCred = this.emptyNewCred(c.provider)
 				await this.load()
 			} catch (e) {

@@ -35,6 +35,41 @@ class ImportJobMapper extends QBMapper {
 		return $this->findEntities($qb);
 	}
 
+	/**
+	 * Atomically claim the next queued job for a user.
+	 * Uses optimistic locking: UPDATE WHERE status='queued' to prevent two workers
+	 * from claiming the same job.
+	 */
+	public function claimNextQueued(string $userId): ?ImportJob {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('id')
+			->from($this->getTableName())
+			->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
+			->andWhere($qb->expr()->eq('status', $qb->createNamedParameter('queued')))
+			->orderBy('created_at', 'ASC')
+			->setMaxResults(1);
+
+		$result = $qb->executeQuery();
+		$row    = $result->fetch();
+		$result->closeCursor();
+		if (!$row) return null;
+
+		$id  = (int) $row['id'];
+		$now = time();
+
+		$upd = $this->db->getQueryBuilder();
+		$affected = $upd->update($this->getTableName())
+			->set('status', $upd->createNamedParameter('running'))
+			->set('updated_at', $upd->createNamedParameter($now, IQueryBuilder::PARAM_INT))
+			->where($upd->expr()->eq('id', $upd->createNamedParameter($id, IQueryBuilder::PARAM_INT)))
+			->andWhere($upd->expr()->eq('status', $upd->createNamedParameter('queued')))
+			->executeStatement();
+
+		if ($affected === 0) return null; // Claimed by another worker
+
+		return $this->findByIdAndUser($id, $userId);
+	}
+
 	public function findByIdAndUser(int $id, string $userId): ImportJob {
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('*')

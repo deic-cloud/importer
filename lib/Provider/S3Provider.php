@@ -79,13 +79,19 @@ class S3Provider implements IImportProvider {
 		$canonicalHeaders  = implode("\n", array_map(fn($k, $v) => "$k:$v", array_keys($headers), $headers)) . "\n";
 		$signedHeadersList = implode(';', array_keys($headers));
 
-		// Sort query string parameters
+		// Sort query string parameters — avoid parse_str() which converts hyphens to underscores
 		$queryArr = [];
 		if ($query) {
-			parse_str($query, $queryArr);
+			foreach (explode('&', $query) as $pair) {
+				[$k, $v] = explode('=', $pair, 2) + ['', ''];
+				$queryArr[rawurldecode($k)] = rawurldecode($v);
+			}
 			ksort($queryArr);
 		}
-		$canonicalQuery = http_build_query($queryArr, '', '&', PHP_QUERY_RFC3986);
+		$canonicalQuery = implode('&', array_map(
+			fn($k, $v) => rawurlencode($k) . '=' . rawurlencode($v),
+			array_keys($queryArr), $queryArr
+		));
 
 		$canonicalRequest = implode("\n", [
 			$method,
@@ -100,7 +106,7 @@ class S3Provider implements IImportProvider {
 		$stringToSign  = "AWS4-HMAC-SHA256\n$datetime\n$scope\n" . hash('sha256', $canonicalRequest);
 
 		$signingKey = $this->hmac(
-			$this->hmac($this->hmac($this->hmac("AWS4$secretKey", $date), $region), 's3'),
+			$this->hmac($this->hmac($this->hmac("AWS4$secretKey", $date, true), $region, true), 's3', true),
 			'aws4_request',
 			true
 		);
@@ -183,8 +189,12 @@ class S3Provider implements IImportProvider {
 		$client  = $this->httpClientService->newClient();
 		$resp    = $client->get($getUrl, ['headers' => $headers, 'stream' => true, 'timeout' => 0]);
 		$body    = $resp->getBody();
-		if (method_exists($body, 'detach')) {
-			return $body->detach();
+		if (is_resource($body)) {
+			return $body;
+		}
+		if (is_object($body) && method_exists($body, 'detach')) {
+			$res = $body->detach();
+			if (is_resource($res)) return $res;
 		}
 		$h = fopen('php://temp', 'r+');
 		fwrite($h, (string) $body);
