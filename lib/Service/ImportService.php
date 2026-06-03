@@ -97,15 +97,11 @@ class ImportService {
 
 	/** Returns true if the file was written, false if it was skipped (exists + !overwrite). */
 	private function writeFile(\OCP\Files\Folder $folder, string $name, mixed $stream, bool $overwrite): bool {
-		try {
-			if ($folder->nodeExists($name)) {
-				if (!$overwrite) return false;
-				$folder->get($name)->putContent($stream);
-			} else {
-				$folder->newFile($name)->putContent($stream);
-			}
-		} catch (LockedException $e) {
-			throw new \RuntimeException("$name is locked by another process — wait a moment and try again");
+		if ($folder->nodeExists($name)) {
+			if (!$overwrite) return false;
+			$folder->get($name)->putContent($stream);
+		} else {
+			$folder->newFile($name)->putContent($stream);
 		}
 		return true;
 	}
@@ -113,10 +109,17 @@ class ImportService {
 	private function ensureFolder(\OCP\Files\Folder $base, string $path): \OCP\Files\Folder {
 		$folder = $base;
 		foreach (array_filter(explode('/', $path)) as $part) {
-			if ($folder->nodeExists($part)) {
-				$folder = $folder->get($part);
-			} else {
-				$folder = $folder->newFolder($part);
+			// Retry each level: parallel workers may race to create the same folder
+			for ($attempt = 0; $attempt < 5; $attempt++) {
+				try {
+					$folder = $folder->nodeExists($part)
+						? $folder->get($part)
+						: $folder->newFolder($part);
+					break;
+				} catch (LockedException $e) {
+					if ($attempt === 4) throw $e;
+					usleep(300000); // 300ms between retries
+				}
 			}
 		}
 		return $folder;
@@ -182,6 +185,7 @@ class ImportService {
 			$job->setStatus('failed');
 			$job->setErrorMessage($e->getMessage());
 		}
+
 		$job->setUpdatedAt(time());
 		$this->mapper->update($job);
 		return $job;

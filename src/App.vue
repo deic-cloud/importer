@@ -86,7 +86,7 @@
 		<!-- ── Job queue ── -->
 		<div class="importer-queue section">
 			<div class="importer-queue-header">
-				<h3>{{ t('importer', 'Download queue') }}</h3>
+				<h3>{{ t('importer', 'Download queue') }}<span v-if="jobs.length" class="importer-queue-count"> ({{ queuedCount }}/{{ jobs.length }})</span></h3>
 				<button v-if="jobs.some(j => j.status === 'queued')"
 					class="button button-vue primary"
 					@click="downloadAll">
@@ -184,6 +184,9 @@ export default {
 	},
 
 	computed: {
+		queuedCount() {
+			return this.jobs.filter(j => j.status === 'queued').length
+		},
 		effectiveDestination() {
 			if (this.storageLocation === 'home') return this.form.destination
 			const sub = this.form.destination.replace(/^\//, '')
@@ -256,7 +259,11 @@ export default {
 			const queued = this.jobs.filter(j => j.status === 'queued').length
 			if (queued === 0) return
 			const workers = Math.min(queued, this.parallelLimit)
-			await Promise.all(Array.from({ length: workers }, () => this.runWorker()))
+			// Stagger starts so the first worker creates destination folders
+			// before others race on the same non-existent paths
+			await Promise.all(Array.from({ length: workers }, (_, i) =>
+				new Promise(r => setTimeout(r, i * 300)).then(() => this.runWorker())
+			))
 		},
 
 		async runWorker() {
