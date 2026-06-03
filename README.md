@@ -1,9 +1,10 @@
 # importer
 
-Nextcloud 34 app for importing files from remote sources into a user's Nextcloud storage.
+Nextcloud app for importing files from remote sources into a user's Nextcloud storage.
 
 ## Features
 
+- **Nextcloud 34+**
 - **HTTP/HTTPS** — download any publicly accessible file by URL
 - **FTP** — browse and download from FTP servers
 - **S3 / Object Store** — download from S3-compatible buckets (AWS, MinIO, etc.) with SigV4 authentication
@@ -41,4 +42,4 @@ Requires Node.js 18+ and npm.
 
 ## Part of ScienceData
 
-This app is developed for [ScienceData](https://sciencedata.dk), a research data platform for Danish universities. See also the companion apps in the [deic-cloud](https://github.com/deic-cloud) organisation.
+This app is developed for [ScienceData](https://sciencedata.dk), a research data platform for Danish universities. See also the [companion apps](https://github.com/deic-cloud).
