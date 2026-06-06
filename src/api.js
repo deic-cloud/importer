@@ -35,6 +35,19 @@ export async function listRemote(provider, url) {
 	return data.ocs?.data ?? []
 }
 
+export async function retryFailed() {
+	const { data } = await axios.post(`${BASE}/retry`, {}, OCS)
+	return data.ocs?.data ?? {}
+}
+
+export async function retryJob(id) {
+	await axios.post(`${BASE}/retry/${id}`, {}, OCS)
+}
+
+export async function prepareDestinations() {
+	await axios.post(`${BASE}/prepare`, {}, OCS)
+}
+
 export async function processJob(overwrite = false) {
 	const { data } = await axios.post(`${BASE}/process`, { overwrite }, OCS)
 	return data.ocs?.data ?? { done: true }

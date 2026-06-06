@@ -86,11 +86,16 @@
 		<!-- ── Job queue ── -->
 		<div class="importer-queue section">
 			<div class="importer-queue-header">
-				<h3>{{ t('importer', 'Download queue') }}<span v-if="jobs.length" class="importer-queue-count"> ({{ queuedCount }}/{{ jobs.length }})</span></h3>
+				<h3>{{ t('importer', 'Download queue') }}<span v-if="jobs.length" class="importer-queue-count"> ({{ queuedCount }}/{{ jobs.length }}<span v-if="failedCount" class="importer-failed-count">, {{ failedCount }} {{ t('importer', 'failed') }}</span>)</span></h3>
 				<button v-if="jobs.some(j => j.status === 'queued')"
 					class="button button-vue primary"
 					@click="downloadAll">
 					{{ t('importer', 'Download all') }}
+				</button>
+				<button v-if="failedCount > 0"
+					class="button"
+					@click="retryAllFailed">
+					{{ t('importer', 'Retry failed') }}
 				</button>
 				<label v-if="jobs.some(j => j.status === 'queued')" class="importer-parallel-label">
 					{{ t('importer', 'Parallel:') }}
@@ -138,6 +143,10 @@
 							</span>
 						</td>
 						<td>
+							<button v-if="job.status === 'failed'"
+								class="button icon-history"
+								:title="t('importer', 'Retry')"
+								@click="retrySingleJob(job.id)" />
 							<button v-if="job.status !== 'running'"
 								class="button icon-delete"
 								:title="t('importer', 'Remove')"
@@ -151,7 +160,7 @@
 </template>
 
 <script>
-import { listJobs, queueJob, deleteJob, listRemote, listGrantGroups, processJob } from './api.js'
+import { listJobs, queueJob, deleteJob, listRemote, listGrantGroups, processJob, retryFailed, retryJob, prepareDestinations } from './api.js'
 
 export default {
 	name: 'ImporterApp',
@@ -186,6 +195,9 @@ export default {
 	computed: {
 		queuedCount() {
 			return this.jobs.filter(j => j.status === 'queued').length
+		},
+		failedCount() {
+			return this.jobs.filter(j => j.status === 'failed').length
 		},
 		effectiveDestination() {
 			if (this.storageLocation === 'home') return this.form.destination
@@ -258,12 +270,10 @@ export default {
 		async downloadAll() {
 			const queued = this.jobs.filter(j => j.status === 'queued').length
 			if (queued === 0) return
+			// Create all destination folders sequentially before parallel downloads start
+			await prepareDestinations()
 			const workers = Math.min(queued, this.parallelLimit)
-			// Stagger starts so the first worker creates destination folders
-			// before others race on the same non-existent paths
-			await Promise.all(Array.from({ length: workers }, (_, i) =>
-				new Promise(r => setTimeout(r, i * 300)).then(() => this.runWorker())
-			))
+			await Promise.all(Array.from({ length: workers }, () => this.runWorker()))
 		},
 
 		async runWorker() {
@@ -276,6 +286,25 @@ export default {
 				}
 				await this.loadJobs()
 				if (result.done) break
+			}
+		},
+
+		async retryAllFailed() {
+			try {
+				await retryFailed()
+				await this.loadJobs()
+				await this.downloadAll()
+			} catch (e) {
+				console.error('[importer] retryAllFailed:', e)
+			}
+		},
+
+		async retrySingleJob(id) {
+			try {
+				await retryJob(id)
+				await this.loadJobs()
+			} catch (e) {
+				console.error('[importer] retrySingleJob:', e)
 			}
 		},
 

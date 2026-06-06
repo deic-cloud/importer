@@ -56,6 +56,33 @@ class ImportService {
 		return $this->mapper->findByUser($userId);
 	}
 
+	/**
+	 * Pre-create all destination folders for queued jobs, sequentially.
+	 * Call this once before starting parallel download workers so no two
+	 * workers race to mkdir the same path.
+	 */
+	public function prepareDestinations(string $userId): void {
+		$jobs = $this->mapper->findQueuedByUser($userId);
+		$userFolder = $this->rootFolder->getUserFolder($userId);
+
+		$seen = [];
+		foreach ($jobs as $job) {
+			$dest = $job->getDestination();
+
+			if (str_starts_with($dest, 'grant:')) {
+				[, $gid, $subPath] = explode(':', $dest, 3) + ['', '', ''];
+				$folderPath = '.uga_grants/' . $gid . ($subPath !== '' ? '/' . ltrim($subPath, '/') : '');
+			} else {
+				$folderPath = $dest;
+			}
+
+			if (isset($seen[$folderPath])) continue;
+			$seen[$folderPath] = true;
+
+			$this->ensureFolder($userFolder, $folderPath);
+		}
+	}
+
 	public function deleteJob(string $userId, int $id): void {
 		try {
 			$job = $this->mapper->findByIdAndUser($id, $userId);
@@ -97,28 +124,42 @@ class ImportService {
 
 	/** Returns true if the file was written, false if it was skipped (exists + !overwrite). */
 	private function writeFile(\OCP\Files\Folder $folder, string $name, mixed $stream, bool $overwrite): bool {
-		if ($folder->nodeExists($name)) {
-			if (!$overwrite) return false;
-			$folder->get($name)->putContent($stream);
-		} else {
-			$folder->newFile($name)->putContent($stream);
+		for ($attempt = 0; $attempt < 10; $attempt++) {
+			try {
+				if ($folder->nodeExists($name)) {
+					if (!$overwrite) return false;
+					$folder->get($name)->putContent($stream);
+				} else {
+					$folder->newFile($name)->putContent($stream);
+				}
+				return true;
+			} catch (LockedException $e) {
+				if ($attempt === 9) throw $e;
+				usleep(500000); // 500ms × 10 = up to 5s
+			}
 		}
-		return true;
+		return true; // unreachable
 	}
 
 	private function ensureFolder(\OCP\Files\Folder $base, string $path): \OCP\Files\Folder {
 		$folder = $base;
 		foreach (array_filter(explode('/', $path)) as $part) {
-			// Retry each level: parallel workers may race to create the same folder
-			for ($attempt = 0; $attempt < 5; $attempt++) {
+			for ($attempt = 0; $attempt < 10; $attempt++) {
 				try {
 					$folder = $folder->nodeExists($part)
 						? $folder->get($part)
 						: $folder->newFolder($part);
 					break;
 				} catch (LockedException $e) {
-					if ($attempt === 4) throw $e;
-					usleep(300000); // 300ms between retries
+					if ($attempt === 9) throw $e;
+					usleep(500000);
+				} catch (\OCP\Files\NotPermittedException $e) {
+					// Race: another worker created the folder between our nodeExists() and newFolder()
+					if ($folder->nodeExists($part)) {
+						$folder = $folder->get($part);
+						break;
+					}
+					throw $e;
 				}
 			}
 		}
@@ -181,6 +222,11 @@ class ImportService {
 				$job->setStatus('done');
 			}
 			$job->setProgress(100);
+		} catch (LockedException $e) {
+			// Temporary contention — push back to end of queue rather than permanently fail
+			$job->setStatus('queued');
+			$job->setCreatedAt(time());
+			$job->setErrorMessage(null);
 		} catch (\Throwable $e) {
 			$job->setStatus('failed');
 			$job->setErrorMessage($e->getMessage());
@@ -189,6 +235,14 @@ class ImportService {
 		$job->setUpdatedAt(time());
 		$this->mapper->update($job);
 		return $job;
+	}
+
+	public function retryFailed(string $userId): int {
+		return $this->mapper->resetFailedForUser($userId);
+	}
+
+	public function retryJob(string $userId, int $id): void {
+		$this->mapper->resetJobForUser($id, $userId);
 	}
 
 	public function listRemote(string $userId, string $provider, string $url): array {

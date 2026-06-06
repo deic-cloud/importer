@@ -99,6 +99,24 @@ class ApiController extends OCSController {
 		}
 	}
 
+	#[NoAdminRequired]
+	public function retryFailed(): DataResponse {
+		$count = $this->importService->retryFailed($this->uid());
+		return new DataResponse(['reset' => $count]);
+	}
+
+	#[NoAdminRequired]
+	public function retryJob(int $id): DataResponse {
+		$this->importService->retryJob($this->uid(), $id);
+		return new DataResponse([]);
+	}
+
+	#[NoAdminRequired]
+	public function prepareDestinations(): DataResponse {
+		$this->importService->prepareDestinations($this->uid());
+		return new DataResponse([]);
+	}
+
 	// ── Processing ───────────────────────────────────────────────────────────
 
 	#[NoAdminRequired]

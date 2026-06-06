@@ -15,6 +15,11 @@ return [
 		['name' => 'api#listCredentials',   'url' => '/api/v1/credentials',            'verb' => 'GET'],
 		['name' => 'api#saveCredentials',   'url' => '/api/v1/credentials',            'verb' => 'POST'],
 		['name' => 'api#deleteCredentials', 'url' => '/api/v1/credentials/{provider}/{host}', 'verb' => 'DELETE'],
+		// Retry failed jobs
+		['name' => 'api#retryFailed', 'url' => '/api/v1/retry',        'verb' => 'POST'],
+		['name' => 'api#retryJob',    'url' => '/api/v1/retry/{id}',   'verb' => 'POST'],
+		// Pre-create all destination folders before parallel downloads start
+		['name' => 'api#prepareDestinations', 'url' => '/api/v1/prepare', 'verb' => 'POST'],
 		// Process next queued job (synchronous, called by frontend workers)
 		['name' => 'api#processJob', 'url' => '/api/v1/process', 'verb' => 'POST'],
 		// Directory listing (for folder picker in import form)

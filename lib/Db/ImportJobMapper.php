@@ -24,6 +24,17 @@ class ImportJobMapper extends QBMapper {
 		return $this->findEntities($qb);
 	}
 
+	/** @return ImportJob[] All queued jobs for a specific user (no limit). */
+	public function findQueuedByUser(string $userId): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->getTableName())
+			->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
+			->andWhere($qb->expr()->eq('status', $qb->createNamedParameter('queued')))
+			->orderBy('created_at', 'ASC');
+		return $this->findEntities($qb);
+	}
+
 	/** @return ImportJob[] */
 	public function findQueued(): array {
 		$qb = $this->db->getQueryBuilder();
@@ -77,6 +88,31 @@ class ImportJobMapper extends QBMapper {
 			->where($qb->expr()->eq('id', $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT)))
 			->andWhere($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)));
 		return $this->findEntity($qb);
+	}
+
+	/** Reset all failed jobs for a user back to queued. Returns count reset. */
+	public function resetFailedForUser(string $userId): int {
+		$qb = $this->db->getQueryBuilder();
+		return (int) $qb->update($this->getTableName())
+			->set('status', $qb->createNamedParameter('queued'))
+			->set('error_message', $qb->createNamedParameter(''))
+			->set('updated_at', $qb->createNamedParameter(time(), IQueryBuilder::PARAM_INT))
+			->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
+			->andWhere($qb->expr()->eq('status', $qb->createNamedParameter('failed')))
+			->executeStatement();
+	}
+
+	/** Reset a single failed job back to queued. */
+	public function resetJobForUser(int $id, string $userId): void {
+		$qb = $this->db->getQueryBuilder();
+		$qb->update($this->getTableName())
+			->set('status', $qb->createNamedParameter('queued'))
+			->set('error_message', $qb->createNamedParameter(''))
+			->set('updated_at', $qb->createNamedParameter(time(), IQueryBuilder::PARAM_INT))
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
+			->andWhere($qb->expr()->eq('status', $qb->createNamedParameter('failed')))
+			->executeStatement();
 	}
 
 	public function deleteOldCompleted(string $userId, int $keepDays = 30): void {
