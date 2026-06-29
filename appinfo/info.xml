@@ -9,7 +9,7 @@
 	<name>Import</name>
 	<summary>Import files from HTTP, FTP, S3 and WebDAV sources</summary>
 	<description>Queue downloads from remote HTTP/HTTPS URLs, FTP servers, S3-compatible object stores, and WebDAV servers directly into your Nextcloud files.</description>
-	<version>1.0.0</version>
+	<version>1.0.1</version>
 	<licence>agpl</licence>
 	<author mail="fror@dtu.dk">Frederik Orellana, DTU</author>
 	<namespace>Importer</namespace>
