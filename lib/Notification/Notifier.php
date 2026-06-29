@@ -9,6 +9,7 @@ use OCP\IURLGenerator;
 use OCP\L10N\IFactory;
 use OCP\Notification\INotification;
 use OCP\Notification\INotifier;
+use OCP\Notification\UnknownNotificationException;
 
 class Notifier implements INotifier {
 	public function __construct(
@@ -26,7 +27,7 @@ class Notifier implements INotifier {
 
 	public function prepare(INotification $notification, string $languageCode): INotification {
 		if ($notification->getApp() !== Application::APP_ID) {
-			throw new \InvalidArgumentException('Wrong app');
+			throw new UnknownNotificationException('Wrong app');
 		}
 
 		$l   = $this->l10nFactory->get(Application::APP_ID, $languageCode);
@@ -36,7 +37,7 @@ class Notifier implements INotifier {
 		match ($notification->getSubject()) {
 			'download_done'   => $notification->setParsedSubject($l->t('Download complete: %s', [$url])),
 			'download_failed' => $notification->setParsedSubject($l->t('Download failed: %s — %s', [$url, $p['error'] ?? ''])),
-			default           => throw new \InvalidArgumentException('Unknown subject'),
+			default           => throw new UnknownNotificationException('Unknown subject'),
 		};
 
 		$notification->setLink($this->urlGenerator->linkToRouteAbsolute('importer.page.index'));
