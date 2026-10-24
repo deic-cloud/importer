@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace OCA\Importer\AppInfo;
 
-use OCA\Importer\BackgroundJob\DownloadJob;
 use OCA\Importer\Notification\Notifier;
 use OCA\Importer\Provider\FtpProvider;
 use OCA\Importer\Provider\HttpProvider;
@@ -25,9 +24,6 @@ class Application extends App implements IBootstrap {
 	}
 
 	public function register(IRegistrationContext $context): void {
-		try {
-			$context->registerBackgroundJob(DownloadJob::class);
-		} catch (\Throwable) {}
 		try {
 			$context->registerNotifierService(Notifier::class);
 		} catch (\Throwable) {}
