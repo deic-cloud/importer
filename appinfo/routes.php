@@ -14,6 +14,9 @@ return [
 		// Credentials
 		['name' => 'api#listCredentials',   'url' => '/api/v1/credentials',            'verb' => 'GET'],
 		['name' => 'api#saveCredentials',   'url' => '/api/v1/credentials',            'verb' => 'POST'],
+		// provider and host as query parameters: a host is usually a URL, and an
+		// encoded "/" in a path segment never reaches PHP (Apache AllowEncodedSlashes Off)
+		['name' => 'api#deleteCredentialsQuery', 'url' => '/api/v1/credentials',     'verb' => 'DELETE'],
 		['name' => 'api#deleteCredentials', 'url' => '/api/v1/credentials/{provider}/{host}', 'verb' => 'DELETE'],
 		// Retry failed jobs
 		['name' => 'api#retryFailed', 'url' => '/api/v1/retry',        'verb' => 'POST'],

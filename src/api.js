@@ -27,7 +27,9 @@ export async function saveCredentials(provider, host, creds) {
 }
 
 export async function deleteCredentials(provider, host) {
-	await axios.delete(`${BASE}/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(host)}`, OCS)
+	// Query parameters, not path segments: a host is usually a URL, and an encoded
+	// "/" in the path is refused by the web server
+	await axios.delete(`${BASE}/credentials`, { ...OCS, params: { provider, host } })
 }
 
 export async function listRemote(provider, url) {

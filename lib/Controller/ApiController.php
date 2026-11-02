@@ -82,6 +82,15 @@ class ApiController extends OCSController {
 		return new DataResponse([]);
 	}
 
+	/**
+	 * Same, with provider and host as query parameters - the form that works for
+	 * a host containing "/" (i.e. any URL), which cannot be a path segment.
+	 */
+	#[NoAdminRequired]
+	public function deleteCredentialsQuery(string $provider, string $host): DataResponse {
+		return $this->deleteCredentials($provider, $host);
+	}
+
 	// ── Grant groups ─────────────────────────────────────────────────────────
 
 	#[NoAdminRequired]
