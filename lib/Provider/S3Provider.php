@@ -60,6 +60,14 @@ class S3Provider implements IImportProvider {
 		$parts  = parse_url($url);
 		$host   = $parts['host'];
 		if (isset($parts['port'])) $host .= ':' . $parts['port'];
+
+		// No access key stored: an anonymous request, which public buckets (open
+		// data on AWS etc.) answer. A request signed with an empty key is refused
+		// ("AuthorizationHeaderMalformed").
+		if ($accessKey === '') {
+			return ['host' => $host];
+		}
+
 		$path   = $parts['path']  ?? '/';
 		$query  = $parts['query'] ?? '';
 
