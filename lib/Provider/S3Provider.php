@@ -13,7 +13,7 @@ use OCP\Http\Client\IClientService;
  * Credentials keys: access_key, secret_key, region, endpoint (optional, defaults to AWS).
  */
 class S3Provider implements IImportProvider {
-	public function __construct(private IClientService $httpClientService) {}
+	public function __construct(private IClientService $httpClientService, private HttpStream $httpStream) {}
 
 	public function getId(): string          { return 's3'; }
 	public function getDisplayName(): string { return 'S3 / Object Store'; }
@@ -130,8 +130,14 @@ class S3Provider implements IImportProvider {
 		return hash_hmac('sha256', $data, $key, $raw);
 	}
 
+	/** Each path segment URI-encoded exactly once (the path may arrive encoded or not). */
 	private function uriEncodePath(string $path): string {
-		return implode('/', array_map(fn($s) => rawurlencode($s), explode('/', $path)));
+		return implode('/', array_map(fn($s) => rawurlencode(rawurldecode($s)), explode('/', $path)));
+	}
+
+	/** The request URL of an object: keys may contain spaces and other characters that need encoding. */
+	private function objectUrl(string $endpoint, string $bucket, string $key): string {
+		return "$endpoint/$bucket/" . $this->uriEncodePath(ltrim($key, '/'));
 	}
 
 	// ── HTTP helper ──────────────────────────────────────────────────────────
@@ -153,15 +159,23 @@ class S3Provider implements IImportProvider {
 
 		$prefix  = rtrim($prefix, '/');
 		if ($prefix !== '') $prefix .= '/';
-		$listUrl = "$endpoint/$bucket?list-type=2&delimiter=%2F" . ($prefix !== '' ? "&prefix=" . rawurlencode($prefix) : '');
-
-		$headers = $this->sign('GET', $listUrl, $creds);
+		$baseUrl = "$endpoint/$bucket?list-type=2&delimiter=%2F" . ($prefix !== '' ? "&prefix=" . rawurlencode($prefix) : '');
 		$client  = $this->httpClientService->newClient();
-		$resp    = $client->get($listUrl, ['headers' => $headers, 'timeout' => 15]);
-		$xml     = new \SimpleXMLElement((string) $resp->getBody());
-
 		$results = [];
+		$token   = '';
+		// S3 returns at most 1000 keys per request: follow the continuation token.
+		do {
+			$listUrl = $baseUrl . ($token !== '' ? '&continuation-token=' . rawurlencode($token) : '');
+			$resp    = $client->get($listUrl, ['headers' => $this->sign('GET', $listUrl, $creds), 'timeout' => 60]);
+			$xml     = new \SimpleXMLElement((string) $resp->getBody());
+			$this->collect($xml, $bucket, $results);
+			$token = ((string) ($xml->IsTruncated ?? '')) === 'true' ? (string) ($xml->NextContinuationToken ?? '') : '';
+		} while ($token !== '');
 
+		return $results;
+	}
+
+	private function collect(\SimpleXMLElement $xml, string $bucket, array &$results): void {
 		// Common prefixes = sub-directories
 		foreach ($xml->CommonPrefixes ?? [] as $cp) {
 			$p    = (string) $cp->Prefix;
@@ -186,33 +200,18 @@ class S3Provider implements IImportProvider {
 				'size'   => (int) (string) $obj->Size,
 			];
 		}
-
-		return $results;
 	}
 
+	/** A real stream, read as it arrives (see HttpStream). */
 	public function getStream(string $url, array $creds) {
 		['endpoint' => $endpoint, 'bucket' => $bucket, 'prefix' => $key] = $this->parseS3Url($url, $creds);
-		$getUrl  = "$endpoint/$bucket/" . ltrim($key, '/');
-		$headers = $this->sign('GET', $getUrl, $creds);
-		$client  = $this->httpClientService->newClient();
-		$resp    = $client->get($getUrl, ['headers' => $headers, 'stream' => true, 'timeout' => 0]);
-		$body    = $resp->getBody();
-		if (is_resource($body)) {
-			return $body;
-		}
-		if (is_object($body) && method_exists($body, 'detach')) {
-			$res = $body->detach();
-			if (is_resource($res)) return $res;
-		}
-		$h = fopen('php://temp', 'r+');
-		fwrite($h, (string) $body);
-		rewind($h);
-		return $h;
+		$getUrl = $this->objectUrl($endpoint, $bucket, $key);
+		return $this->httpStream->open($getUrl, $this->sign('GET', $getUrl, $creds), 3);
 	}
 
 	public function getFileSize(string $url, array $creds): int {
 		['endpoint' => $endpoint, 'bucket' => $bucket, 'prefix' => $key] = $this->parseS3Url($url, $creds);
-		$headUrl = "$endpoint/$bucket/" . ltrim($key, '/');
+		$headUrl = $this->objectUrl($endpoint, $bucket, $key);
 		$headers = $this->sign('HEAD', $headUrl, $creds);
 		try {
 			$client = $this->httpClientService->newClient();

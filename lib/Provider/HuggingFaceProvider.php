@@ -19,7 +19,7 @@ use OCP\Http\Client\IClientService;
 class HuggingFaceProvider implements IImportProvider {
 	private const HUB = 'https://huggingface.co';
 
-	public function __construct(private IClientService $httpClientService) {}
+	public function __construct(private IClientService $httpClientService, private HttpStream $httpStream) {}
 
 	public function getId(): string          { return 'huggingface'; }
 	public function getDisplayName(): string { return 'Hugging Face'; }
@@ -56,27 +56,10 @@ class HuggingFaceProvider implements IImportProvider {
 		return $results;
 	}
 
-	/**
-	 * A real stream, read as it arrives. Nextcloud's HTTP client (Guzzle on curl) downloads the whole
-	 * response into a temporary file before returning it, so progress only showed after the download
-	 * and every file was written twice. PHP's own https stream follows the redirect to the CDN.
-	 * The address is always on huggingface.co (parse() checks the host).
-	 */
+	/** A real stream, read as it arrives (see HttpStream); the address is always on huggingface.co. */
 	public function getStream(string $url, array $creds) {
 		$this->parse($url);
-		$ctx = stream_context_create(['http' => [
-			'method'          => 'GET',
-			'follow_location' => 1,
-			'max_redirects'   => 10,
-			'timeout'         => 120,                 // per read, not for the whole file
-			'header'          => "User-Agent: Nextcloud importer\r\n",
-		]]);
-		$h = @fopen($url, 'rb', false, $ctx);
-		if ($h === false) {
-			$err = error_get_last()['message'] ?? 'unknown error';
-			throw new \RuntimeException('Could not open ' . $url . ': ' . $err);
-		}
-		return $h;
+		return $this->httpStream->open($url);
 	}
 
 	public function getFileSize(string $url, array $creds): int {

@@ -7,7 +7,7 @@ namespace OCA\Importer\Provider;
 use OCP\Http\Client\IClientService;
 
 class WebDavProvider implements IImportProvider {
-	public function __construct(private IClientService $httpClientService) {}
+	public function __construct(private IClientService $httpClientService, private HttpStream $httpStream) {}
 
 	public function getId(): string          { return 'webdav'; }
 	public function getDisplayName(): string { return 'WebDAV'; }
@@ -78,28 +78,13 @@ class WebDavProvider implements IImportProvider {
 		return $results;
 	}
 
+	/** A real stream, read as it arrives (see HttpStream). */
 	public function getStream(string $url, array $creds) {
-		$opts = ['stream' => true, 'timeout' => 0];
+		$headers = [];
 		if (!empty($creds['username'])) {
-			$opts['auth'] = [$creds['username'], $creds['password'] ?? ''];
+			$headers['Authorization'] = 'Basic ' . base64_encode($creds['username'] . ':' . ($creds['password'] ?? ''));
 		}
-		$client = $this->httpClientService->newClient();
-		$resp   = $client->get($url, $opts);
-		$body   = $resp->getBody();
-		// With stream:true NC's getBody() already calls detach() → returns a PHP resource directly
-		if (is_resource($body)) {
-			return $body;
-		}
-		// PSR-7 stream object that hasn't been detached yet
-		if (is_object($body) && method_exists($body, 'detach')) {
-			$res = $body->detach();
-			if (is_resource($res)) return $res;
-		}
-		// Fallback: buffer string response in a temp stream
-		$h = fopen('php://temp', 'r+');
-		fwrite($h, (string) $body);
-		rewind($h);
-		return $h;
+		return $this->httpStream->open($url, $headers);
 	}
 
 	public function getFileSize(string $url, array $creds): int {
