@@ -9,7 +9,8 @@ Nextcloud app for importing files from remote sources into a user's Nextcloud st
 - **FTP** — browse and download from FTP servers
 - **S3 / Object Store** — download from S3-compatible buckets (AWS, MinIO, etc.) with SigV4 authentication
 - **WebDAV** — browse and download from WebDAV servers (including other Nextcloud instances)
-- Remote directory browser for FTP, S3, and WebDAV — navigate folders and queue individual files or entire trees recursively
+- **Hugging Face** — browse public models and datasets on the Hugging Face Hub (`https://huggingface.co/<owner>` lists an owner's repositories, `https://huggingface.co/[datasets/]<owner>/<name>` a repository's files) and queue a whole repository or organisation; gated and private repositories are not supported
+- Remote directory browser for FTP, S3, WebDAV and Hugging Face — navigate folders and queue individual files or entire trees recursively
 - Download queue with configurable parallelism
 - Per-download destination folder picker, including support for grant folders (`user_group_admin`)
 - Overwrite control: choose at download time whether to overwrite existing files (skipped files are marked as such)

@@ -22,6 +22,7 @@ class HttpProvider implements IImportProvider {
 	public function getStream(string $url, array $creds) {
 		$options = [
 			'timeout'   => 0,
+			'stream'    => true,       // large files: pass the body through instead of buffering it
 			'nextcloud' => ['allow_local_address' => true],
 		];
 		if (!empty($creds['username'])) {

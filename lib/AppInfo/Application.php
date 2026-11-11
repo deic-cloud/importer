@@ -7,6 +7,7 @@ namespace OCA\Importer\AppInfo;
 use OCA\Importer\Notification\Notifier;
 use OCA\Importer\Provider\FtpProvider;
 use OCA\Importer\Provider\HttpProvider;
+use OCA\Importer\Provider\HuggingFaceProvider;
 use OCA\Importer\Provider\S3Provider;
 use OCA\Importer\Provider\WebDavProvider;
 use OCA\Importer\Service\ImportService;
@@ -37,6 +38,7 @@ class Application extends App implements IBootstrap {
 				$c->get(FtpProvider::class),
 				$c->get(S3Provider::class),
 				$c->get(WebDavProvider::class),
+				$c->get(HuggingFaceProvider::class),
 			);
 		});
 	}
