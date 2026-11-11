@@ -57,6 +57,7 @@ class ImportJobMapper extends QBMapper {
 			->from($this->getTableName())
 			->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
 			->andWhere($qb->expr()->eq('status', $qb->createNamedParameter('queued')))
+			->andWhere($qb->expr()->eq('kind', $qb->createNamedParameter('file')))   // trees run in the background
 			->orderBy('created_at', 'ASC')
 			->setMaxResults(1);
 
@@ -79,6 +80,42 @@ class ImportJobMapper extends QBMapper {
 		if ($affected === 0) return null; // Claimed by another worker
 
 		return $this->findByIdAndUser($id, $userId);
+	}
+
+	/** Atomically claim a queued job by id (any kind) - for the background worker. */
+	public function claimById(int $id): bool {
+		$upd = $this->db->getQueryBuilder();
+		return $upd->update($this->getTableName())
+			->set('status', $upd->createNamedParameter('running'))
+			->set('updated_at', $upd->createNamedParameter(time(), IQueryBuilder::PARAM_INT))
+			->where($upd->expr()->eq('id', $upd->createNamedParameter($id, IQueryBuilder::PARAM_INT)))
+			->andWhere($upd->expr()->eq('status', $upd->createNamedParameter('queued')))
+			->executeStatement() === 1;
+	}
+
+	/**
+	 * Put back in the queue jobs marked running that show no sign of life (no progress write)
+	 * for $seconds - e.g. a download killed by a web-server restart. Returns how many.
+	 */
+	public function requeueStale(int $seconds): int {
+		$upd = $this->db->getQueryBuilder();
+		return $upd->update($this->getTableName())
+			->set('status', $upd->createNamedParameter('queued'))
+			->where($upd->expr()->eq('status', $upd->createNamedParameter('running')))
+			->andWhere($upd->expr()->lt('updated_at', $upd->createNamedParameter(time() - $seconds, IQueryBuilder::PARAM_INT)))
+			->executeStatement();
+	}
+
+	/** Write progress fields of a job directly (cheap, frequent), stamping updated_at as a sign of life. */
+	public function updateProgress(int $id, array $fields): void {
+		$upd = $this->db->getQueryBuilder();
+		$upd->update($this->getTableName())
+			->set('updated_at', $upd->createNamedParameter(time(), IQueryBuilder::PARAM_INT))
+			->where($upd->expr()->eq('id', $upd->createNamedParameter($id, IQueryBuilder::PARAM_INT)));
+		foreach ($fields as $col => $val) {
+			$upd->set($col, $upd->createNamedParameter($val, is_int($val) ? IQueryBuilder::PARAM_INT : IQueryBuilder::PARAM_STR));
+		}
+		$upd->executeStatement();
 	}
 
 	public function findByIdAndUser(int $id, string $userId): ImportJob {

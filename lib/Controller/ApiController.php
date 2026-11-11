@@ -38,9 +38,9 @@ class ApiController extends OCSController {
 	}
 
 	#[NoAdminRequired]
-	public function queueJob(string $provider, string $sourceUrl, string $destination, bool $overwrite = false): DataResponse {
+	public function queueJob(string $provider, string $sourceUrl, string $destination, bool $overwrite = false, string $kind = 'file'): DataResponse {
 		try {
-			$job = $this->importService->queueJob($this->uid(), $provider, $sourceUrl, $destination, $overwrite);
+			$job = $this->importService->queueJob($this->uid(), $provider, $sourceUrl, $destination, $overwrite, $kind);
 			return new DataResponse($job->jsonSerialize());
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['error' => $e->getMessage()], 400);

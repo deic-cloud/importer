@@ -61,9 +61,10 @@
 				<span class="importer-browser-url" :title="browser.url">{{ browser.url }}</span>
 				<button v-if="browser.entries.length > 0"
 					class="button"
-					:disabled="!canQueue || scanning"
-					@click="queueAllVisible">
-					{{ scanning ? t('importer', 'Scanning…') : t('importer', 'Queue all files') }}
+					:disabled="!canQueue"
+					:title="t('importer', 'Import everything below this folder as one job. It runs in the background and can be left alone: files already there are skipped, so it simply continues after an interruption.')"
+					@click="queueTree">
+					{{ t('importer', 'Import this folder') }}
 				</button>
 				<button class="button icon-close" @click="browser.visible = false" />
 			</div>
@@ -88,7 +89,7 @@
 		<div class="importer-queue section">
 			<div class="importer-queue-header">
 				<h3>{{ t('importer', 'Download queue') }}<span v-if="jobs.length" class="importer-queue-count"> ({{ queuedCount }}/{{ jobs.length }}<span v-if="failedCount" class="importer-failed-count">, {{ failedCount }} {{ t('importer', 'failed') }}</span>)</span></h3>
-				<button v-if="jobs.some(j => j.status === 'queued')"
+				<button v-if="queuedFileJobs"
 					class="button button-vue primary"
 					@click="downloadAll">
 					{{ t('importer', 'Download all') }}
@@ -98,14 +99,14 @@
 					@click="retryAllFailed">
 					{{ t('importer', 'Retry failed') }}
 				</button>
-				<label v-if="jobs.some(j => j.status === 'queued')" class="importer-parallel-label">
+				<label v-if="queuedFileJobs" class="importer-parallel-label">
 					{{ t('importer', 'Parallel:') }}
 					<input v-model.number="parallelLimit"
 						type="number" min="1" max="20"
 						class="importer-parallel-input"
 						@change="saveParallelLimit" />
 				</label>
-				<label v-if="jobs.some(j => j.status === 'queued')"
+				<label v-if="queuedFileJobs"
 					class="importer-overwrite-label"
 					:title="t('importer', 'Overwrite any existing files with the same names')">
 					<input type="checkbox" v-model="overwrite" />
@@ -132,15 +133,27 @@
 				</thead>
 				<tbody>
 					<tr v-for="job in jobs" :key="job.id" :class="`status-${job.status}`">
-						<td :title="job.source_url" class="importer-cell-url">{{ basename(job.source_url) }}</td>
+						<td :title="job.source_url" class="importer-cell-url">
+							<span v-if="job.kind === 'tree'" class="icon-folder importer-kind-icon" />{{ basename(job.source_url) }}
+						</td>
 						<td>{{ displayDestination(job.destination) }}</td>
-						<td>{{ statusLabel(job.status) }}</td>
+						<td>{{ jobStatusLabel(job) }}</td>
 						<td>
-							<div v-if="job.status === 'running'" class="importer-progress">
+							<div v-if="job.kind === 'tree' && job.files_total > 0" class="importer-tree-summary">
+								{{ treeSummary(job) }}
+							</div>
+							<div v-if="job.status === 'running' && (job.kind === 'tree' || job.bytes_total > 0)" class="importer-progress"
+								:title="formatSize(job.bytes_done) + ' / ' + formatSize(job.bytes_total)">
 								<div class="importer-progress-bar" :style="{ width: job.progress + '%' }" />
 							</div>
-							<span v-else-if="job.status === 'failed'" class="importer-error-inline" :title="job.error_message">
-								{{ t('importer', 'Failed') }}
+							<div v-if="job.status === 'running' && job.kind === 'tree' && job.current_file" class="importer-current" :title="job.current_file">
+								{{ basename(job.current_file) }}
+							</div>
+							<span v-else-if="job.status === 'running' && job.kind !== 'tree' && job.bytes_total > 0" class="importer-size">
+								{{ formatSize(job.bytes_done) }} / {{ formatSize(job.bytes_total) }}
+							</span>
+							<span v-if="job.status === 'failed'" class="importer-error-inline" :title="job.error_message">
+								{{ job.kind === 'tree' ? job.error_message : t('importer', 'Failed') }}
 							</span>
 						</td>
 						<td>
@@ -177,7 +190,6 @@ export default {
 			overwrite: false,
 			grantGroups: [],
 			formError: null,
-			scanning: false,
 			parallelLimit: parseInt(localStorage.getItem('importer_parallel') || '3', 10),
 			jobs: [],
 			pollTimer: null,
@@ -205,6 +217,9 @@ export default {
 			const sub = this.form.destination.replace(/^\//, '')
 			return `grant:${this.storageLocation}:${sub}`
 		},
+		queuedFileJobs() {
+			return this.jobs.filter(j => j.status === 'queued' && j.kind !== 'tree').length
+		},
 		canQueue() {
 			return this.form.sourceUrl.trim() !== '' && this.form.destination.trim() !== ''
 		},
@@ -226,7 +241,7 @@ export default {
 	mounted() {
 		this.loadJobs()
 		this.loadGrantGroups()
-		this.pollTimer = setInterval(this.pollJobs, 3000)
+		this.pollTimer = setInterval(this.pollJobs, 5000)
 	},
 
 	beforeDestroy() {
@@ -270,7 +285,7 @@ export default {
 		},
 
 		async downloadAll() {
-			const queued = this.jobs.filter(j => j.status === 'queued').length
+			const queued = this.queuedFileJobs       // whole-folder jobs run in the background
 			if (queued === 0) return
 			// Create all destination folders sequentially before parallel downloads start
 			await prepareDestinations()
@@ -371,45 +386,13 @@ export default {
 			}
 		},
 
-		async queueAllVisible() {
+		async queueTree() {
 			this.formError = null
-			this.scanning = true
 			try {
-				await this.queueRecursive(this.browser.url, this.browser.entries, '')
-			} finally {
-				this.scanning = false
-			}
-		},
-
-		destWithSubdir(relDir) {
-			if (!relDir) return this.effectiveDestination
-			if (this.storageLocation === 'home') {
-				return this.form.destination.replace(/\/$/, '') + '/' + relDir
-			}
-			const sub = this.form.destination.replace(/^\//, '').replace(/\/$/, '')
-			return `grant:${this.storageLocation}:${sub ? sub + '/' + relDir : relDir}`
-		},
-
-		async queueRecursive(baseUrl, entries, relDir) {
-			for (const entry of entries) {
-				if (entry.is_dir) {
-					let subEntries
-					try {
-						subEntries = await listRemote(this.form.provider, entry.url)
-					} catch (e) {
-						this.formError = e?.response?.data?.ocs?.data?.error ?? t('importer', 'Could not list directory')
-						continue
-					}
-					const subDir = relDir ? relDir + '/' + entry.name : entry.name
-					await this.queueRecursive(entry.url, subEntries, subDir)
-				} else {
-					try {
-						const job = await queueJob(this.form.provider, entry.url, this.destWithSubdir(relDir))
-						this.jobs.unshift(job)
-					} catch (e) {
-						this.formError = e?.response?.data?.ocs?.data?.error ?? t('importer', 'Failed to queue some files')
-					}
-				}
+				const job = await queueJob(this.form.provider, this.browser.url, this.effectiveDestination, false, 'tree')
+				this.jobs.unshift(job)
+			} catch (e) {
+				this.formError = e?.response?.data?.ocs?.data?.error ?? t('importer', 'Failed to queue download')
 			}
 		},
 
@@ -467,6 +450,22 @@ export default {
 			)
 		},
 
+		jobStatusLabel(job) {
+			if (job.kind === 'tree' && job.status === 'queued') {
+				return job.files_done > 0
+					? t('importer', 'Continues in the background')
+					: t('importer', 'Waiting for the background job')
+			}
+			return this.statusLabel(job.status)
+		},
+
+		treeSummary(job) {
+			let s = t('importer', '{done} of {total} files', { done: job.files_done, total: job.files_total })
+				+ ' · ' + this.formatSize(job.bytes_done) + ' / ' + this.formatSize(job.bytes_total)
+			if (job.files_failed > 0) s += ' · ' + t('importer', '{n} failed', { n: job.files_failed })
+			return s
+		},
+
 		statusLabel(status) {
 			const map = {
 				queued:  t('importer', 'Queued'),
@@ -499,7 +498,8 @@ export default {
 			if (bytes < 1024) return bytes + ' B'
 			if (bytes < 1024 ** 2) return (bytes / 1024).toFixed(1) + ' KB'
 			if (bytes < 1024 ** 3) return (bytes / 1024 ** 2).toFixed(1) + ' MB'
-			return (bytes / 1024 ** 3).toFixed(2) + ' GB'
+			if (bytes < 1024 ** 4) return (bytes / 1024 ** 3).toFixed(2) + ' GB'
+			return (bytes / 1024 ** 4).toFixed(2) + ' TB'
 		},
 	},
 }

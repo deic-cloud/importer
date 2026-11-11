@@ -8,10 +8,16 @@ use OCA\Importer\Db\ImportJob;
 use OCA\Importer\Db\ImportJobMapper;
 use OCA\Importer\Provider\IImportProvider;
 use OCP\AppFramework\Db\DoesNotExistException;
+use Icewind\Streams\CallbackWrapper;
 use OCP\Files\IRootFolder;
 use OCP\Lock\LockedException;
 
 class ImportService {
+	/** A running job that has written no progress for this long is put back in the queue. */
+	public const STALE_SECONDS = 900;
+	/** Progress is written at most this often (seconds) - it is also the job's sign of life. */
+	private const PROGRESS_INTERVAL = 2;
+
 	/** @var IImportProvider[] */
 	private array $providers;
 
@@ -35,10 +41,14 @@ class ImportService {
 		return $this->providers[$id] ?? throw new \InvalidArgumentException("Unknown provider: $id");
 	}
 
-	public function queueJob(string $userId, string $provider, string $sourceUrl, string $destination, bool $overwrite = false): ImportJob {
+	public function queueJob(string $userId, string $provider, string $sourceUrl, string $destination, bool $overwrite = false, string $kind = 'file'): ImportJob {
 		$this->getProvider($provider); // validate
+		if (!in_array($kind, ['file', 'tree'], true)) {
+			throw new \InvalidArgumentException("Unknown job kind: $kind");
+		}
 
 		$job = new ImportJob();
+		$job->setKind($kind);
 		$job->setUserId($userId);
 		$job->setProvider($provider);
 		$job->setSourceUrl($sourceUrl);
@@ -96,30 +106,152 @@ class ImportService {
 	}
 
 	/**
-	 * Run the next queued job. Called by DownloadJob background worker.
-	 * Returns the job that was processed, or null if queue was empty.
+	 * Run the next queued job (single files and whole trees). Called by the DownloadJob background
+	 * worker; a tree job works until $deadline and is then put back in the queue to continue later.
+	 * Returns the job, or null if the queue is empty.
 	 */
-	public function processNextJob(): ?ImportJob {
-		$jobs = $this->mapper->findQueued();
-		if (empty($jobs)) return null;
-
-		$job = $jobs[0];
-		$job->setStatus('running');
-		$job->setUpdatedAt(time());
-		$this->mapper->update($job);
-
-		try {
-			$this->runJob($job);
-			$job->setStatus('done');
-			$job->setProgress(100);
-		} catch (\Throwable $e) {
-			$job->setStatus('failed');
-			$job->setErrorMessage($e->getMessage());
+	public function processNextJob(int $deadline = 0): ?ImportJob {
+		$this->mapper->requeueStale(self::STALE_SECONDS);
+		foreach ($this->mapper->findQueued() as $candidate) {
+			if (!$this->mapper->claimById($candidate->getId())) {
+				continue;                                   // taken by another worker
+			}
+			$job = $this->mapper->findByIdAndUser($candidate->getId(), $candidate->getUserId());
+			try {
+				if ($job->getKind() === 'tree') {
+					$finished = $this->runTree($job, $deadline ?: time() + 900);
+					if (!$finished) {
+						$job->setStatus('queued');          // time is up - the next run continues
+					} elseif ($job->getFilesFailed() > 0) {
+						$job->setStatus('failed');
+						$job->setErrorMessage($job->getFilesFailed() . ' files failed - retry to fetch them');
+					} else {
+						$job->setStatus('done');
+						$job->setErrorMessage(null);
+					}
+					$job->setCurrentFile(null);
+				} else {
+					$this->runJob($job, $job->getOverwrite());
+					if ($job->getStatus() !== 'skipped') {
+						$job->setStatus('done');
+					}
+					$job->setProgress(100);
+				}
+			} catch (LockedException) {
+				$job->setStatus('queued');
+				$job->setCreatedAt(time());
+			} catch (\Throwable $e) {
+				$job->setStatus('failed');
+				$job->setErrorMessage($e->getMessage());
+			}
+			$job->setUpdatedAt(time());
+			$this->mapper->update($job);
+			return $job;
 		}
+		return null;
+	}
 
-		$job->setUpdatedAt(time());
-		$this->mapper->update($job);
-		return $job;
+	/**
+	 * Sync a whole remote folder into the destination: list it, then download every file that is
+	 * missing or has a different size. The files are the state - a later pass, after an interruption
+	 * or a retry, skips what is complete. Returns false if $deadline came before the end.
+	 */
+	private function runTree(ImportJob $job, int $deadline): bool {
+		$provider = $this->getProvider($job->getProvider());
+		$uid      = $job->getUserId();
+		$creds    = $this->credentialService->retrieve($uid, $job->getProvider(), $job->getSourceUrl());
+
+		$files = [];
+		$this->walk($provider, $creds, $job->getSourceUrl(), '', $files, $job->getId());
+		$bytesTotal = array_sum(array_column($files, 'size'));
+		$job->setFilesTotal(count($files));
+		$job->setBytesTotal($bytesTotal);
+
+		$root = $this->destinationFolder($uid, $job->getDestination());
+		$done = $failed = $bytesDone = 0;
+		$this->mapper->updateProgress($job->getId(), ['files_total' => count($files), 'bytes_total' => $bytesTotal]);
+		foreach ($files as $f) {
+			$folder = $f['dir'] === '' ? $root : $this->ensureFolder($root, $f['dir']);
+			if ($folder->nodeExists($f['name']) && ($f['size'] <= 0 || $folder->get($f['name'])->getSize() === $f['size'])) {
+				$done++;
+				$bytesDone += $f['size'];
+				continue;                                   // already complete
+			}
+			if (time() >= $deadline) {
+				$this->setTreeProgress($job, $done, $failed, $bytesDone, null);
+				return false;
+			}
+			$this->setTreeProgress($job, $done, $failed, $bytesDone, ltrim($f['dir'] . '/' . $f['name'], '/'));
+			try {
+				$stream = $provider->getStream($f['url'], $creds);
+				$base = $bytesDone;
+				$stream = $this->withProgress($stream, $job->getId(), function (int $read) use ($base, $bytesTotal): array {
+					return ['bytes_done' => $base + $read, 'progress' => $bytesTotal > 0 ? (int)(100 * ($base + $read) / $bytesTotal) : 0];
+				});
+				try {
+					$this->writeFile($folder, $f['name'], $stream, true);
+				} finally {
+					if (is_resource($stream)) fclose($stream);
+				}
+				$done++;
+				$bytesDone += $f['size'];
+			} catch (\Throwable $e) {
+				$failed++;
+				$job->setErrorMessage($f['dir'] . '/' . $f['name'] . ': ' . $e->getMessage());
+			}
+		}
+		$this->setTreeProgress($job, $done, $failed, $bytesDone, null);
+		return true;
+	}
+
+	/** Collect all files below $url: ['dir' => relative folder, 'name', 'url', 'size']. */
+	private function walk(IImportProvider $provider, array $creds, string $url, string $dir, array &$files, int $jobId): void {
+		foreach ($provider->listDirectory($url, $creds) as $e) {
+			if ($e['is_dir']) {
+				$this->walk($provider, $creds, $e['url'], ltrim($dir . '/' . $e['name'], '/'), $files, $jobId);
+				$this->mapper->updateProgress($jobId, []);  // sign of life while listing big trees
+			} else {
+				$files[] = ['dir' => $dir, 'name' => $e['name'], 'url' => $e['url'], 'size' => (int)($e['size'] ?? 0)];
+			}
+		}
+	}
+
+	private function setTreeProgress(ImportJob $job, int $done, int $failed, int $bytesDone, ?string $current): void {
+		$job->setFilesDone($done);
+		$job->setFilesFailed($failed);
+		$job->setBytesDone($bytesDone);
+		$job->setCurrentFile($current);
+		$job->setProgress($job->getBytesTotal() > 0 ? (int)(100 * $bytesDone / $job->getBytesTotal()) : 0);
+		$this->mapper->updateProgress($job->getId(), [
+			'files_done' => $done, 'files_failed' => $failed, 'bytes_done' => $bytesDone,
+			'current_file' => $current, 'progress' => $job->getProgress(),
+		]);
+	}
+
+	/**
+	 * Wrap a download stream so that the bytes read are written to the job every few seconds -
+	 * the progress bar, and the job's sign of life. $fields maps bytes read so far to columns.
+	 */
+	private function withProgress($stream, int $jobId, callable $fields) {
+		$read = 0;
+		$last = time();
+		return CallbackWrapper::wrap($stream, function (int $count) use (&$read, &$last, $jobId, $fields): void {
+			$read += $count;
+			if (time() - $last >= self::PROGRESS_INTERVAL) {
+				$last = time();
+				$this->mapper->updateProgress($jobId, $fields($read));
+			}
+		});
+	}
+
+	/** The folder a destination string points at: a path in the home, or grant:{gid}:{subpath}. */
+	private function destinationFolder(string $uid, string $destination): \OCP\Files\Folder {
+		$userFolder = $this->rootFolder->getUserFolder($uid);
+		if (str_starts_with($destination, 'grant:')) {
+			[, $gid, $subPath] = explode(':', $destination, 3) + ['', '', ''];
+			return $this->ensureFolder($userFolder, '.uga_grants/' . $gid . ($subPath !== '' ? '/' . ltrim($subPath, '/') : ''));
+		}
+		return $this->ensureFolder($userFolder, $destination);
 	}
 
 	/** Returns true if the file was written, false if it was skipped (exists + !overwrite). */
@@ -173,7 +305,12 @@ class ImportService {
 		$creds = $this->credentialService->retrieve($uid, $job->getProvider(), $job->getSourceUrl());
 
 		$filename = rawurldecode(basename(parse_url($job->getSourceUrl(), PHP_URL_PATH) ?: 'download') ?: 'download');
+		$total    = max(0, $provider->getFileSize($job->getSourceUrl(), $creds));
+		$job->setBytesTotal($total);
+		$this->mapper->updateProgress($job->getId(), ['bytes_total' => $total, 'bytes_done' => 0]);
 		$stream   = $provider->getStream($job->getSourceUrl(), $creds);
+		$stream   = $this->withProgress($stream, $job->getId(), fn (int $read): array =>
+			['bytes_done' => $read, 'progress' => $total > 0 ? min(99, (int)(100 * $read / $total)) : 0]);
 
 		$destination = $job->getDestination();
 
@@ -203,6 +340,7 @@ class ImportService {
 		}
 
 		$job->setProgress(100);
+		$job->setBytesDone($total);
 		if (!$written) {
 			$job->setStatus('skipped');
 		}

@@ -8,8 +8,8 @@ export async function listJobs() {
 	return data.ocs?.data ?? []
 }
 
-export async function queueJob(provider, sourceUrl, destination, overwrite = false) {
-	const { data } = await axios.post(`${BASE}/jobs`, { provider, sourceUrl, destination, overwrite }, OCS)
+export async function queueJob(provider, sourceUrl, destination, overwrite = false, kind = 'file') {
+	const { data } = await axios.post(`${BASE}/jobs`, { provider, sourceUrl, destination, overwrite, kind }, OCS)
 	return data.ocs?.data ?? {}
 }
 

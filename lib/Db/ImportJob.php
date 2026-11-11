@@ -27,9 +27,24 @@ use OCP\AppFramework\Db\Entity;
  * @method void   setUpdatedAt(int $ts)
  * @method bool   getOverwrite()
  * @method void   setOverwrite(bool $overwrite)
+ * @method string getKind()
+ * @method void   setKind(string $kind)
+ * @method int    getFilesTotal()
+ * @method void   setFilesTotal(int $n)
+ * @method int    getFilesDone()
+ * @method void   setFilesDone(int $n)
+ * @method int    getFilesFailed()
+ * @method void   setFilesFailed(int $n)
+ * @method int    getBytesTotal()
+ * @method void   setBytesTotal(int $n)
+ * @method int    getBytesDone()
+ * @method void   setBytesDone(int $n)
+ * @method string|null getCurrentFile()
+ * @method void   setCurrentFile(?string $path)
  */
 class ImportJob extends Entity {
-	protected array $_fieldTypes = ['id' => 'integer', 'overwrite' => 'boolean'];
+	protected array $_fieldTypes = ['id' => 'integer', 'overwrite' => 'boolean', 'filesTotal' => 'integer',
+		'filesDone' => 'integer', 'filesFailed' => 'integer', 'bytesTotal' => 'integer', 'bytesDone' => 'integer'];
 	protected string $userId = '';
 	protected string $provider = '';
 	protected string $sourceUrl = '';
@@ -40,6 +55,14 @@ class ImportJob extends Entity {
 	protected int $createdAt = 0;
 	protected int $updatedAt = 0;
 	protected bool $overwrite = false;
+	// 'file': one file; 'tree': a whole remote folder/repository, synced in the background
+	protected string $kind = 'file';
+	protected int $filesTotal = 0;
+	protected int $filesDone = 0;
+	protected int $filesFailed = 0;
+	protected int $bytesTotal = 0;
+	protected int $bytesDone = 0;
+	protected ?string $currentFile = null;
 
 	public function jsonSerialize(): array {
 		return [
@@ -53,6 +76,13 @@ class ImportJob extends Entity {
 			'created_at'   => $this->createdAt,
 			'updated_at'   => $this->updatedAt,
 			'overwrite'    => $this->overwrite,
+			'kind'         => $this->kind,
+			'files_total'  => $this->filesTotal,
+			'files_done'   => $this->filesDone,
+			'files_failed' => $this->filesFailed,
+			'bytes_total'  => $this->bytesTotal,
+			'bytes_done'   => $this->bytesDone,
+			'current_file' => $this->currentFile,
 		];
 	}
 }

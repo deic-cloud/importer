@@ -202,3 +202,26 @@
 	flex: 1;
 	min-width: 0;
 }
+
+/* Whole-folder jobs: summary line and the file being downloaded */
+.importer-tree-summary {
+	font-size: 0.9em;
+	white-space: nowrap;
+}
+
+.importer-current {
+	font-size: 0.85em;
+	color: var(--color-text-maxcontrast);
+	max-width: 28em;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.importer-kind-icon {
+	display: inline-block;
+	width: 16px;
+	height: 16px;
+	margin-right: 4px;
+	vertical-align: text-bottom;
+}
