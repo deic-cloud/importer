@@ -74,6 +74,23 @@ class ApiController extends OCSController {
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['error' => $e->getMessage()], 400);
 		}
+		if ($provider === 'sftp') {
+			// password, certificate (the user's own certificate key, fetched when connecting -
+			// nothing stored) or key (a pasted RSA private key, stored like a password)
+			$auth = in_array($creds['auth'] ?? 'password', ['password', 'certificate', 'key'], true) ? $creds['auth'] : 'password';
+			$creds = ['username' => (string)($creds['username'] ?? ''), 'auth' => $auth]
+				+ match ($auth) {
+					'password'    => ['password' => (string)($creds['password'] ?? '')],
+					'key'         => ['private_key' => trim((string)($creds['private_key'] ?? '')) . "\n", 'passphrase' => (string)($creds['passphrase'] ?? '')],
+					'certificate' => [],
+				};
+			if ($auth === 'key' && ($problem = \OCA\Importer\Provider\SftpProvider::keyProblem($creds['private_key'], $creds['passphrase'])) !== '') {
+				return new DataResponse(['error' => $problem], 400);
+			}
+			if ($auth === 'certificate' && \OCA\Importer\Provider\SftpProvider::certificateKey($this->uid()) === '') {
+				return new DataResponse(['error' => 'You have no personal certificate to log in with'], 400);
+			}
+		}
 		$this->credentialService->store($this->uid(), $provider, $host, $creds);
 		return new DataResponse([]);
 	}

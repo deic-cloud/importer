@@ -6,10 +6,12 @@ namespace OCA\Importer\Provider;
 
 use OCP\IAppConfig;
 use OCP\Security\IRemoteHostValidator;
+use phpseclib\Crypt\RSA;
 use phpseclib\Net\SFTP;
 
 /**
- * SFTP servers (e.g. HPC and lab systems, ERDA), with a username and password.
+ * SFTP servers (e.g. HPC and lab systems, ERDA), with a username and a password, a private
+ * key (RSA, optionally with a passphrase) or the user's own certificate key (files_sharding).
  *
  * Addresses: sftp://host[:port]/path. The path is absolute; "/" (or nothing) means the
  * login's home folder, which is what most users expect from sftp/scp. Uses phpseclib 2,
@@ -134,9 +136,83 @@ class SftpProvider implements IImportProvider {
 				. ' If the server was reinstalled, an admin can forget the old key: occ config:app:delete importer ' . $cfgKey);
 		}
 		$user = (string)($creds['username'] ?? '');
-		if ($user === '' || !$sftp->login($user, (string)($creds['password'] ?? ''))) {
-			throw new \RuntimeException("SFTP: login failed for $user@$host:$port - check the login under Settings → Data import");
+		if ($user === '' || !$sftp->login($user, $this->secret($creds))) {
+			throw new \RuntimeException("SFTP: login failed for $user@$host:$port - check the login under Settings → Data import"
+				. (($creds['auth'] ?? '') === 'certificate' ? ', and that your certificate\'s public key is in ~/.ssh/authorized_keys on the server' : ''));
 		}
 		return $sftp;
+	}
+
+	/**
+	 * What to log in with: the password, a private key from the login (optionally with a
+	 * passphrase), or the user's own certificate key from files_sharding (auth=certificate),
+	 * fetched when connecting and never stored here. phpseclib 2 reads RSA keys only.
+	 */
+	private function secret(array $creds): string|RSA {
+		$auth = (string)($creds['auth'] ?? 'password');
+		if ($auth === 'password') {
+			return (string)($creds['password'] ?? '');
+		}
+		$passphrase = '';
+		if ($auth === 'certificate') {
+			$pem = self::certificateKey((string)($creds['_uid'] ?? ''));
+			if ($pem === '') {
+				throw new \RuntimeException('SFTP: you have no personal certificate (Settings → Access & certificates) to log in with');
+			}
+		} else {
+			$pem = (string)($creds['private_key'] ?? '');
+			$passphrase = (string)($creds['passphrase'] ?? '');
+		}
+		$rsa = new RSA();
+		if ($passphrase !== '') {
+			$rsa->setPassword($passphrase);
+		}
+		if (!$rsa->loadKey($pem)) {
+			throw new \RuntimeException(self::isNonRsaKey($pem)
+				? 'SFTP: only RSA keys can be used here (not ed25519 or ECDSA) - use an RSA key or a password'
+				: 'SFTP: the private key could not be read - check the key and its passphrase');
+		}
+		return $rsa;
+	}
+
+	/** Why a pasted private key cannot be used ('' = it can), checked when the login is saved. */
+	public static function keyProblem(string $pem, string $passphrase): string {
+		$rsa = new RSA();
+		if ($passphrase !== '') {
+			$rsa->setPassword($passphrase);
+		}
+		if ($rsa->loadKey($pem)) {
+			return '';
+		}
+		return self::isNonRsaKey($pem)
+			? 'Only RSA keys can be used here (not ed25519 or ECDSA) - use an RSA key or a password'
+			: 'The private key could not be read - check the key and its passphrase';
+	}
+
+	/** An ed25519 or ECDSA key? (In the OpenSSH format the key type is inside the base64 body.) */
+	private static function isNonRsaKey(string $pem): bool {
+		if (preg_match('/-----BEGIN (EC|ECDSA) PRIVATE KEY-----/', $pem)) {
+			return true;
+		}
+		if (preg_match('/-----BEGIN OPENSSH PRIVATE KEY-----(.*?)-----END/s', $pem, $m)) {
+			$body = (string)base64_decode(preg_replace('/\s+/', '', $m[1]));
+			return str_contains($body, 'ssh-ed25519') || str_contains($body, 'ecdsa-sha2');
+		}
+		return false;
+	}
+
+	/** The user's certificate key (files_sharding), '' when that app or a certificate is missing. */
+	public static function certificateKey(string $userId): string {
+		if ($userId === '' || !class_exists(\OCA\FilesSharding\Service\CertificateService::class)) {
+			return '';
+		}
+		try {
+			if (!\OCP\Server::get(\OCP\App\IAppManager::class)->isEnabledForAnyone('files_sharding')) {
+				return '';
+			}
+			return (string)\OCP\Server::get(\OCA\FilesSharding\Service\CertificateService::class)->getKeyPem($userId);
+		} catch (\Throwable) {
+			return '';
+		}
 	}
 }

@@ -19,7 +19,7 @@
 				<tr v-for="c in credentials" :key="c.provider + '/' + c.host">
 					<td>{{ providerLabel(c.provider) }}</td>
 					<td>{{ c.host }}</td>
-					<td>{{ c.creds.username }}</td>
+					<td>{{ c.creds.username }}<span v-if="c.provider === 'sftp' && c.creds.auth && c.creds.auth !== 'password'" class="importer-cred-auth"> · {{ authLabel(c.creds.auth) }}</span></td>
 					<td>
 						<button class="button icon-delete"
 							:title="t('importer', 'Delete')"
@@ -51,8 +51,44 @@
 					<input v-model="newCred.host" type="text" :placeholder="hostPlaceholder" autocomplete="off" />
 				</div>
 
+				<!-- SFTP: password, the user's certificate key, or a private key -->
+				<template v-if="newCred.provider === 'sftp'">
+					<div class="importer-row">
+						<label>{{ t('importer', 'Username') }}</label>
+						<input v-model="newCred.username" type="text" autocomplete="off" />
+					</div>
+					<div class="importer-row">
+						<label>{{ t('importer', 'Log in with') }}</label>
+						<select v-model="newCred.auth">
+							<option value="password">{{ t('importer', 'Password') }}</option>
+							<option v-if="certificate.available" value="certificate">{{ t('importer', 'My certificate key') }}</option>
+							<option value="key">{{ t('importer', 'A private key') }}</option>
+						</select>
+					</div>
+					<div v-if="newCred.auth === 'password'" class="importer-row">
+						<label>{{ t('importer', 'Password') }}</label>
+						<input v-model="newCred.password" type="password" autocomplete="new-password" />
+					</div>
+					<p v-if="newCred.auth === 'certificate'" class="importer-hint">
+						{{ t('importer', 'The key of your personal certificate (Settings → Access & certificates) is used when connecting; nothing is stored here. Put its public key in ~/.ssh/authorized_keys on the server:') }}
+						<a :href="certificate.public_key_url" download="id_rsa.pub">{{ t('importer', 'Download the public key') }}</a>
+					</p>
+					<template v-if="newCred.auth === 'key'">
+						<div class="importer-row">
+							<label>{{ t('importer', 'Private key') }}</label>
+							<textarea v-model="newCred.private_key" rows="5" spellcheck="false" autocomplete="off"
+								placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
+						</div>
+						<div class="importer-row">
+							<label>{{ t('importer', 'Passphrase (if any)') }}</label>
+							<input v-model="newCred.passphrase" type="password" autocomplete="new-password" />
+						</div>
+						<p class="importer-hint">{{ t('importer', 'RSA keys only. The key is stored encrypted, like a password.') }}</p>
+					</template>
+				</template>
+
 				<!-- Basic auth fields (http, ftp, webdav) -->
-				<template v-if="newCred.provider !== 's3'">
+				<template v-else-if="newCred.provider !== 's3'">
 					<div class="importer-row">
 						<label>{{ t('importer', 'Username') }}</label>
 						<input v-model="newCred.username" type="text" autocomplete="off" />
@@ -106,6 +142,7 @@ export default {
 			credentials: [],
 			saveError: null,
 			newCred: this.emptyNewCred('http'),
+			certificate: (() => { try { return window.OCP.InitialState.loadState('importer', 'certificate_key') } catch (e) { return { available: false, public_key_url: '' } } })(),
 		}
 	},
 
@@ -149,13 +186,15 @@ export default {
 			}
 			const creds = c.provider === 's3'
 				? { access_key: c.access_key, secret_key: c.secret_key, region: c.region || 'us-east-1', endpoint: c.endpoint }
-				: { username: c.username, password: c.password }
+				: c.provider === 'sftp'
+					? { username: c.username, auth: c.auth, password: c.password, private_key: c.private_key, passphrase: c.passphrase }
+					: { username: c.username, password: c.password }
 			try {
 				await saveCredentials(c.provider, host, creds)
 				this.newCred = this.emptyNewCred(c.provider)
 				await this.load()
 			} catch (e) {
-				this.saveError = t('importer', 'Could not save credentials')
+				this.saveError = e?.response?.data?.ocs?.data?.error ?? t('importer', 'Could not save credentials')
 			}
 		},
 
@@ -173,7 +212,11 @@ export default {
 		},
 
 		emptyNewCred(provider) {
-			return { provider, host: '', username: '', password: '', access_key: '', secret_key: '', region: '', endpoint: '' }
+			return { provider, host: '', username: '', password: '', access_key: '', secret_key: '', region: '', endpoint: '', auth: 'password', private_key: '', passphrase: '' }
+		},
+
+		authLabel(a) {
+			return a === 'certificate' ? t('importer', 'certificate key') : a === 'key' ? t('importer', 'private key') : ''
 		},
 
 		providerLabel(id) {

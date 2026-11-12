@@ -38,6 +38,12 @@ class CredentialService {
 	 * Falls back to hostname-only match if no prefix matches.
 	 */
 	public function retrieve(string $userId, string $provider, string $url): array {
+		// The user's id rides along (_uid), for sources that act as the user - e.g. SFTP
+		// logging in with the user's certificate key. Other sources ignore it.
+		return ['_uid' => $userId] + $this->retrieveStored($userId, $provider, $url);
+	}
+
+	private function retrieveStored(string $userId, string $provider, string $url): array {
 		$rows = $this->rawRows($userId, $provider);
 
 		// Longest prefix match
@@ -96,7 +102,7 @@ class CredentialService {
 			} catch (\Throwable) {
 				continue;
 			}
-			$safe  = ['username' => $creds['username'] ?? $creds['access_key'] ?? ''];
+			$safe  = ['username' => $creds['username'] ?? $creds['access_key'] ?? '', 'auth' => $creds['auth'] ?? ''];
 			$out[] = ['provider' => $provider, 'host' => $baseUrl, 'creds' => $safe];
 		}
 		return $out;

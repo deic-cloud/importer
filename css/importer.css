@@ -225,3 +225,23 @@
 	margin-right: 4px;
 	vertical-align: text-bottom;
 }
+
+/* SFTP login choices in Settings → Data import */
+.importer-add-cred-form textarea {
+	width: 100%;
+	max-width: 520px;
+	font-family: var(--font-face-monospace, monospace);
+	font-size: 12px;
+}
+.importer-hint {
+	color: var(--color-text-maxcontrast);
+	max-width: 620px;
+	margin: 4px 0 10px;
+}
+.importer-cred-auth {
+	color: var(--color-text-maxcontrast);
+}
+.importer-hint a {
+	color: var(--color-primary-element);
+	text-decoration: underline;
+}
