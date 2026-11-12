@@ -55,6 +55,12 @@ export async function processJob(overwrite = false) {
 	return data.ocs?.data ?? { done: true }
 }
 
+/** One step (up to ~45 s) of a whole-folder job while the page is open; returns the job. */
+export async function stepJob(id) {
+	const { data } = await axios.post(`${BASE}/jobs/${id}/step`, {}, OCS)
+	return data.ocs?.data
+}
+
 export async function listGrantGroups() {
 	try {
 		const { data } = await axios.get(`${BASE}/grant-groups`, OCS)

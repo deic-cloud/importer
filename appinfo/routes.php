@@ -11,6 +11,8 @@ return [
 		['name' => 'api#listJobs',   'url' => '/api/v1/jobs',      'verb' => 'GET'],
 		['name' => 'api#queueJob',   'url' => '/api/v1/jobs',      'verb' => 'POST'],
 		['name' => 'api#deleteJob',  'url' => '/api/v1/jobs/{id}', 'verb' => 'DELETE'],
+		// One step of a whole-folder job while the Import page is open
+		['name' => 'api#stepJob',    'url' => '/api/v1/jobs/{id}/step', 'verb' => 'POST'],
 		// Credentials
 		['name' => 'api#listCredentials',   'url' => '/api/v1/credentials',            'verb' => 'GET'],
 		['name' => 'api#saveCredentials',   'url' => '/api/v1/credentials',            'verb' => 'POST'],

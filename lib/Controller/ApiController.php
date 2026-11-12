@@ -15,6 +15,8 @@ use OCP\IRequest;
 use OCP\IUserSession;
 
 class ApiController extends OCSController {
+	private const STEP_SECONDS = 45;
+
 	public function __construct(
 		IRequest                $request,
 		private IUserSession    $userSession,
@@ -136,6 +138,21 @@ class ApiController extends OCSController {
 			return new DataResponse(['done' => true]);
 		}
 		return new DataResponse(array_merge($job->jsonSerialize(), ['done' => false]));
+	}
+
+	/**
+	 * One step of a whole-folder job while its owner's Import page is open (see
+	 * ImportService::processTreeStep): at most STEP_SECONDS between files, then the job
+	 * goes back to the queue; the page calls again, or the background job continues.
+	 */
+	#[NoAdminRequired]
+	public function stepJob(int $id): DataResponse {
+		set_time_limit(0);                                  // a single large file may outlast the step
+		try {
+			return new DataResponse($this->importService->processTreeStep($this->uid(), $id, self::STEP_SECONDS)->jsonSerialize());
+		} catch (\OCP\AppFramework\Db\DoesNotExistException) {
+			return new DataResponse(['error' => 'No such job'], 404);
+		}
 	}
 
 	// ── Remote listing ───────────────────────────────────────────────────────

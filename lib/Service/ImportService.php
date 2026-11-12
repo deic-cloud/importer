@@ -117,45 +117,60 @@ class ImportService {
 				continue;                                   // taken by another worker
 			}
 			$job = $this->mapper->findByIdAndUser($candidate->getId(), $candidate->getUserId());
-			try {
-				if ($job->getKind() === 'tree') {
-					$finished = $this->runTree($job, $deadline ?: time() + 900);
-					if (!$finished) {
-						$job->setStatus('queued');          // time is up - the next run continues
-					} elseif ($job->getFilesFailed() > 0) {
-						$job->setStatus('failed');
-						$job->setErrorMessage($job->getFilesFailed() . ' files failed - retry to fetch them');
-					} else {
-						$job->setStatus('done');
-						$job->setErrorMessage(null);
-					}
-					$job->setCurrentFile(null);
-				} else {
-					$this->runJob($job, $job->getOverwrite());
-					if ($job->getStatus() !== 'skipped') {
-						$job->setStatus('done');
-					}
-					$job->setProgress(100);
-				}
-			} catch (LockedException) {
-				$job->setStatus('queued');
-				$job->setCreatedAt(time());
-			} catch (\Throwable $e) {
-				$job->setStatus('failed');
-				$job->setErrorMessage($e->getMessage());
-			}
-			$job->setUpdatedAt(time());
-			$this->mapper->update($job);
-			return $job;
+			return $this->runClaimed($job, $deadline ?: time() + 900);
 		}
 		return null;
 	}
 
 	/**
-	 * Sync a whole remote folder into the destination: list it, then download every file that is
-	 * missing or has a different size. The files are the state - a later pass, after an interruption
-	 * or a retry, skips what is complete. Returns false if $deadline came before the end.
+	 * One step of a whole-folder job, driven by the user's open Import page: claim it and
+	 * work on it until $seconds have passed (checked between files), then hand it back to
+	 * the queue, where the page's next step - or, if the page has been closed, the
+	 * background job - continues. A job someone else is working on right now (the
+	 * background job, another tab) is returned unchanged.
 	 */
+	public function processTreeStep(string $userId, int $id, int $seconds): ImportJob {
+		$job = $this->mapper->findByIdAndUser($id, $userId);
+		if ($job->getKind() !== 'tree' || !$this->mapper->claimById($id)) {
+			return $job;
+		}
+		return $this->runClaimed($this->mapper->findByIdAndUser($id, $userId), time() + $seconds);
+	}
+
+	/** Run a claimed job: a tree until $deadline (then back to the queue), a file to the end. */
+	private function runClaimed(ImportJob $job, int $deadline): ImportJob {
+		try {
+			if ($job->getKind() === 'tree') {
+				$finished = $this->runTree($job, $deadline);
+				if (!$finished) {
+					$job->setStatus('queued');              // time is up - the next step or run continues
+				} elseif ($job->getFilesFailed() > 0) {
+					$job->setStatus('failed');
+					$job->setErrorMessage($job->getFilesFailed() . ' files failed - retry to fetch them');
+				} else {
+					$job->setStatus('done');
+					$job->setErrorMessage(null);
+				}
+				$job->setCurrentFile(null);
+			} else {
+				$this->runJob($job, $job->getOverwrite());
+				if ($job->getStatus() !== 'skipped') {
+					$job->setStatus('done');
+				}
+				$job->setProgress(100);
+			}
+		} catch (LockedException) {
+			$job->setStatus('queued');
+			$job->setCreatedAt(time());
+		} catch (\Throwable $e) {
+			$job->setStatus('failed');
+			$job->setErrorMessage($e->getMessage());
+		}
+		$job->setUpdatedAt(time());
+		$this->mapper->update($job);
+		return $job;
+	}
+
 	private function runTree(ImportJob $job, int $deadline): bool {
 		$provider = $this->getProvider($job->getProvider());
 		$uid      = $job->getUserId();

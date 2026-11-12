@@ -175,7 +175,7 @@
 </template>
 
 <script>
-import { listJobs, queueJob, deleteJob, listRemote, listGrantGroups, processJob, retryFailed, retryJob, prepareDestinations } from './api.js'
+import { listJobs, queueJob, deleteJob, listRemote, listGrantGroups, processJob, retryFailed, retryJob, prepareDestinations, stepJob } from './api.js'
 
 export default {
 	name: 'ImporterApp',
@@ -194,6 +194,7 @@ export default {
 			parallelLimit: parseInt(localStorage.getItem('importer_parallel') || '3', 10),
 			jobs: [],
 			pollTimer: null,
+			drivingTrees: false,   // this page is working through a whole-folder job
 			browser: {
 				visible: false,
 				loading: false,
@@ -256,6 +257,36 @@ export default {
 				this.jobs = await listJobs()
 			} catch (e) {
 				console.error('[importer] loadJobs:', e)
+			}
+			this.driveTrees()
+		},
+
+		// Whole-folder jobs start right away while this page is open: the page asks the
+		// server for one step at a time (up to ~45 s each, between files). Close the page and
+		// the background job continues where it stopped; a job the background job (or
+		// another tab) is working on right now is left to it - polling shows its progress,
+		// and the page takes over again when it is handed back.
+		async driveTrees() {
+			if (this.drivingTrees) return
+			this.drivingTrees = true
+			try {
+				for (;;) {
+					const next = this.jobs.find(j => j.kind === 'tree' && j.status === 'queued')
+					if (!next) break
+					let job
+					try {
+						job = await stepJob(next.id)
+					} catch (e) {
+						console.error('[importer] step:', e)
+						break
+					}
+					if (!job) break
+					const i = this.jobs.findIndex(j => j.id === job.id)
+					if (i >= 0) this.jobs.splice(i, 1, job)
+					if (job.status === 'running') break   // someone else has it; polling takes over
+				}
+			} finally {
+				this.drivingTrees = false
 			}
 		},
 
@@ -393,6 +424,7 @@ export default {
 			try {
 				const job = await queueJob(this.form.provider, this.browser.url, this.effectiveDestination, false, 'tree')
 				this.jobs.unshift(job)
+				this.driveTrees()                       // starts now; no waiting for cron
 			} catch (e) {
 				this.formError = e?.response?.data?.ocs?.data?.error ?? t('importer', 'Failed to queue download')
 			}
@@ -454,6 +486,7 @@ export default {
 
 		jobStatusLabel(job) {
 			if (job.kind === 'tree' && job.status === 'queued') {
+				if (this.drivingTrees) return this.statusLabel('running')
 				return job.files_done > 0
 					? t('importer', 'Continues in the background')
 					: t('importer', 'Waiting for the background job')
