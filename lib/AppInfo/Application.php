@@ -9,6 +9,7 @@ use OCA\Importer\Provider\FtpProvider;
 use OCA\Importer\Provider\HttpProvider;
 use OCA\Importer\Provider\HuggingFaceProvider;
 use OCA\Importer\Provider\S3Provider;
+use OCA\Importer\Provider\SftpProvider;
 use OCA\Importer\Provider\WebDavProvider;
 use OCA\Importer\Service\ImportService;
 use OCP\AppFramework\App;
@@ -38,6 +39,7 @@ class Application extends App implements IBootstrap {
 				$c->get(FtpProvider::class),
 				$c->get(S3Provider::class),
 				$c->get(WebDavProvider::class),
+				$c->get(SftpProvider::class),
 				$c->get(HuggingFaceProvider::class),
 			);
 		});

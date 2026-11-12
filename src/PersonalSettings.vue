@@ -42,6 +42,7 @@
 						<option value="ftp">FTP</option>
 						<option value="s3">S3 / Object Store</option>
 						<option value="webdav">WebDAV</option>
+						<option value="sftp">SFTP</option>
 					</select>
 				</div>
 
@@ -115,6 +116,7 @@ export default {
 				ftp:    'ftp.example.com',
 				s3:     'https://s3.amazonaws.com (or leave blank for AWS)',
 				webdav: 'https://webdav.example.com',
+				sftp:   'sftp://sftp.example.com:22',
 			}
 			return map[this.newCred.provider] ?? ''
 		},
@@ -175,7 +177,7 @@ export default {
 		},
 
 		providerLabel(id) {
-			const map = { http: 'HTTP/HTTPS', ftp: 'FTP', s3: 'S3', webdav: 'WebDAV' }
+			const map = { http: 'HTTP/HTTPS', ftp: 'FTP', s3: 'S3', webdav: 'WebDAV', sftp: 'SFTP' }
 			return map[id] ?? id
 		},
 	},

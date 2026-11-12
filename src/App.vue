@@ -11,6 +11,7 @@
 					<option value="ftp">FTP</option>
 					<option value="s3">S3 / Object Store</option>
 					<option value="webdav">WebDAV</option>
+					<option value="sftp">SFTP</option>
 					<option value="huggingface">Hugging Face</option>
 				</select>
 			</div>
@@ -224,7 +225,7 @@ export default {
 			return this.form.sourceUrl.trim() !== '' && this.form.destination.trim() !== ''
 		},
 		canBrowse() {
-			return ['ftp', 'webdav', 's3', 'huggingface'].includes(this.form.provider)
+			return ['ftp', 'webdav', 'sftp', 's3', 'huggingface'].includes(this.form.provider)
 		},
 		urlPlaceholder() {
 			const map = {
@@ -232,6 +233,7 @@ export default {
 				ftp:    'ftp://ftp.example.com/pub/dataset/',
 				s3:     's3://my-bucket/data/ or https://s3.region.amazonaws.com/bucket/prefix/',
 				webdav: 'https://webdav.example.com/remote.php/dav/files/user/',
+				sftp:   'sftp://sftp.example.com:22/ - your home folder, or sftp://host/absolute/path/',
 				huggingface: 'https://huggingface.co/datasets/owner/name - or https://huggingface.co/owner for all of it',
 			}
 			return map[this.form.provider] ?? ''
